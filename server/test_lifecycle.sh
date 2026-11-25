@@ -2,6 +2,7 @@
 set -euo pipefail
 [ "$(id -u)" = 0 ] && [ -f /etc/hihy-test-environment ] || { echo 'Disposable Linux VM required.' >&2; exit 1; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PACKAGE_DIR="${HIHY_TEST_PACKAGE_DIR:-$ROOT/server}"
 TMP=$(mktemp -d)
 chain="HYSTERIA-T$BASHPID"
 created_yq=false
@@ -34,14 +35,14 @@ iptables -C INPUT -p udp --dport 19999 -m comment --comment hihy-external-test -
 iptables -t nat -S "$chain" >/dev/null
 crontab -l | grep -Fq 'hihy cronTask external-test'
 printf 'PASS: uninstall preserves system yq, unrelated firewall chain and cron\n'
-HIHY_AUTO_IP=127.0.0.1 HIHY_AUTO_PORT=34567 HIHY_AUTO_PASSWORD=test-lifecycle bash "$ROOT/server/install.sh" --auto --lang en >"$TMP/install.log" 2>&1 || { tail -30 "$TMP/install.log"; exit 1; }
+HIHY_AUTO_IP=127.0.0.1 HIHY_AUTO_PORT=34567 HIHY_AUTO_PASSWORD=test-lifecycle bash "$PACKAGE_DIR/install.sh" --auto --lang en >"$TMP/install.log" 2>&1 || { tail -30 "$TMP/install.log"; exit 1; }
 [ "$(sha256sum /usr/bin/yq)" = "$yq_before" ]
 [ "$(stat -c %a /etc/hihy/conf/config.yaml)" = 600 ]
 [ "$(stat -c %a /etc/hihy/cert/www.bing.com.key)" = 600 ]
 if runuser -u nobody -- cat /etc/hihy/conf/config.yaml >/dev/null 2>&1; then echo 'FAIL: credential readable by nobody'; exit 1; fi
 if runuser -u nobody -- cat /etc/hihy/cert/www.bing.com.key >/dev/null 2>&1; then echo 'FAIL: key readable by nobody'; exit 1; fi
 config_before=$(sha256sum /etc/hihy/conf/config.yaml)
-if bash "$ROOT/server/install.sh" --auto >"$TMP/reinstall.log" 2>&1; then echo 'FAIL: existing installation overwritten'; exit 1; fi
+if bash "$PACKAGE_DIR/install.sh" --auto >"$TMP/reinstall.log" 2>&1; then echo 'FAIL: existing installation overwritten'; exit 1; fi
 [ "$(sha256sum /etc/hihy/conf/config.yaml)" = "$config_before" ]
 hihy restart >"$TMP/restart.log" 2>&1
 hihy checkStatus >"$TMP/status.log"

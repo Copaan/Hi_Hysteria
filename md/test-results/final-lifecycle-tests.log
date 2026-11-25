@@ -1,0 +1,61 @@
+PASS: complete, modified, missing, omitted and symlinked package validation
+PASS: installation state requires all assets and preserves incomplete installations
+PASS: defaults: masquerade off
+PASS: defaults: congestion bbr
+PASS: defaults: bbr standard
+PASS: defaults: realm off
+PASS: defaults: hopping off
+PASS: defaults: block_http3 off
+PASS: defaults: xforwarded set
+PASS: defaults: ech off
+PASS: defaults: mimic off
+PASS: defaults: loss compensation kept on
+PASS: override: ech enabled
+PASS: override: ech default public name
+PASS: override: ech custom public name
+PASS: override: mimic enabled
+PASS: override: mimic forces hopping off
+PASS: version gate: 2.12.0 satisfies 2.12.0
+PASS: version gate: 2.11.0 below 2.12.0
+PASS: version gate: 2.10.0 satisfies 2.10.0
+PASS: version gate: 2.9.1 below 2.10.0
+PASS: version gate: 2.11.3 above 2.10.0
+PASS: version gate: unknown version rejected
+PASS: override: port
+PASS: override: password
+PASS: override: domain
+PASS: override: masquerade proxy
+PASS: override: port hopping range
+Invalid HIHY_AUTO_PORT: 99999 (need 1-65535)
+PASS: invalid port 99999 rejected
+Invalid port hopping range: 48000-47000
+PASS: inverted hop range rejected
+PASS: isValidPort bounds
+PASS: isValidPort rejects invalid input
+PASS: validation: success marker
+PASS: validation: acme failure marker
+PASS: validation: bind failure marker
+PASS: validation: timeout
+PASS: installMimic: already installed ok
+PASS: installMimic: boot conf written
+mimic v9.9.9 installed, kernel module loaded (modprobe mimic), enabled at boot
+PASS: installMimic: auto install ok
+PASS: installMimic: binary installed
+PASS: installMimic: dkms source staged
+PASS: installMimic: boot conf after install
+mimic kernel module could not be compiled automatically (dkms/kernel headers missing?). Install it manually per Getting Started and retry: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md
+PASS: installMimic: dkms fail -> nonzero
+PASS: installMimic: no conf on failure
+mimic does not support i686 architecture (amd64/arm64 only); mimic skipped
+PASS: installMimic: unsupported arch rejected
+PASS: hysteria version follows github repo redirect
+ALL auto_config TESTS PASSED
+PASS: three exporters, typed names, Gecko/ECH, profiles, hopping, Realm, permissions and fail-closed trust
+test_build: server/hy2.sh is in sync with server/src/. PASS
+PASS: uninstall preserves system yq, unrelated firewall chain and cron
+PASS: install, private files, existing-install refusal, restart, stop/start and disabled self-update
+PASS: real ACL routing, exact deletion and injection refusal
+PASS: real SOCKS credential serialization/removal and IP preference changes
+PASS: independent loopback statistics secret, private exports and no version queries
+PASS: injected activation failure restores actual core and running service
+PASS: stopped-core update validates real configuration and retains stopped state

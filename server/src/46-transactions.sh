@@ -82,7 +82,7 @@ writeHysteriaConfig() (
                     [ ! -d "$backup/$part" ] || cp -a -- "$backup/$part" "$HIHY_ROOT_DIR/$part" || rc=1
                 done
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$transaction"
         return "$rc"
@@ -101,7 +101,7 @@ writeHysteriaConfig() (
         grep -Fxv 'reject(all, udp/443)' "$backup/acl/acl.txt" >"$candidate/acl/acl.txt" || [ $? -eq 1 ] || return 1
         if [ "$block_http3" = true ]; then printf '%s\n' 'reject(all, udp/443)' >>"$candidate/acl/acl.txt"; fi
     fi
-    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stopped=true; stop || return 1; fi
     if [ "$useAcme" = true ]; then timeout=60; [ "$useDns" = true ] || allowPort tcp 80 || return 1; fi
     startInstallValidationProcess "$candidate/conf/config.yaml" "$transaction/validation.log" || return 1
     if ! waitForValidationOutcome "$transaction/validation.log" "$timeout"; then

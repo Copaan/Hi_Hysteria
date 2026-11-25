@@ -113,7 +113,7 @@ updateHysteriaCore() (
                 stop >/dev/null 2>&1 || true
                 mv -f -- "$temp/previous" "$core" || rc=1
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$temp"
         return "$rc"
@@ -125,8 +125,8 @@ updateHysteriaCore() (
     cp -p -- "$core" "$temp/previous" || return 1
     if [ "$(getServiceRunState)" = running ]; then
         was_running=true
-        stop || return 1
         stopped=true
+        stop || return 1
     fi
     startInstallValidationProcess "$HIHY_ROOT_DIR/conf/config.yaml" "$temp/validation.log" "$temp/candidate" || return 1
     waitForValidationOutcome "$temp/validation.log" 60 || { securityError 'Candidate core failed configuration validation.'; return 1; }

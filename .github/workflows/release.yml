@@ -1,53 +1,27 @@
 name: Release
-
 on:
   push:
     tags: ["ver*"]
-
 permissions:
-  contents: write
-
-env:
-  YQ_VERSION: v4.44.3
-
+  contents: read
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
   release:
-    name: Verify & publish release
-    runs-on: ubuntu-latest
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install toolchain
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build reviewed local bundle
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck qrencode
-          sudo wget -q -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          sudo chmod +x /usr/local/bin/yq
-
-      - name: Verify build sync & tests
-        run: |
-          bash scripts/build.sh
-          git diff --exit-code server/hy2.sh
-          bash server/test_build.sh
-          bash scripts/i18n-validate.sh
-          bash server/test_bootstrap_install.sh
-          bash server/test_install_recovery.sh
-          bash server/test_auto_config.sh
-          bash server/test_client_config.sh
-
-      - name: Verify tag matches script version
-        run: |
-          script_version=$(grep -oP '^hihyV="\K[^"]+' server/hy2.sh)
-          if [ "$script_version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match hihyV=$script_version in server/hy2.sh"
-            exit 1
-          fi
-
-      - name: Create GitHub Release
+          bash scripts/package.sh
+          git diff --exit-code server/hy2.sh server/SHA256SUMS
+          script_version=$(sed -n 's/^hihyV="\([^"]*\)"$/\1/p' server/hy2.sh)
+          test "$script_version" = "$GITHUB_REF_NAME"
+      - name: Publish complete package and checksum
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            server/hy2.sh server/install.sh \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --title "$GITHUB_REF_NAME" --generate-notes

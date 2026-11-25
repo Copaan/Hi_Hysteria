@@ -1,5 +1,7 @@
 # Hi Hysteria
 
+> **Security revision ver1.20-secure.1 (2026-11-26)**: install only from a complete reviewed local bundle. See [installation and trust boundaries](md/security-install.md) and [actual test coverage](md/security-test-report.md). Core baseline: 2.14.0. Historical demos below do not describe the current update behavior, scheduling or private export paths.
+
 [English](README_en.md) | [中文](README.md) | [فارسی](README_fa.md) | **Русский**
 
 ##### (2026/08/23) ver1.20
@@ -81,14 +83,14 @@ mihomo/sing-box не поддерживают mimic — только натив�
   * Количество онлайн-устройств
   * Активные соединения и прочее
 * Правила маршрутизации доменов на основе ACL с поддержкой блокировки
-* Поддержка всех основных операционных систем и архитектур:
-  * ОС: Arch, Alpine, RHEL, CentOS, AlmaLinux, Debian, Ubuntu, Rocky Linux и др.
-  * Архитектура: x86_64, i386/i686, aarch64/arm64, armv7, s390x, ppc64le
+* Целевые системы для новой установки в этой версии:
+  * ОС: Debian / Ubuntu; остальные старые пути не проверены
+  * Закреплённые зависимости: amd64 / arm64; проверено на Debian 12 amd64
 * Генерация QR-кодов для ссылок hy2 прямо в терминале — меньше копирования
 * Генерация оригинальных конфигурационных файлов Hysteria2 с полным набором параметров
-* Запуск процесса Hysteria2 с высоким приоритетом — скорость прежде всего
+* Обычный приоритет процесса без режима реального времени chrt
 * Прыжки портов и демон Hysteria2 управляются через скрипты автозапуска для лучшей расширяемости
-* Скрипт установки Hysteria v1 сохранён как опция
+* Старая версия HY1 остаётся в исторической ветке и не входит в пакет HY2
 * Расчёт BDP (произведение задержки на пропускную способность) для настройки параметров QUIC
 * Поддержка исходящего SOCKS5, включая автоматическую настройку WARP
 * Поддержка LXC, OpenVZ, KVM и всех основных платформ виртуализации
@@ -123,7 +125,8 @@ mihomo/sing-box не поддерживают mimic — только натив�
 
 ```
 su - root # переключиться на root.
-bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/install.sh)
+# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+bash install.sh --lang ru
 ```
 
 ### Настройка
@@ -154,7 +157,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/head
 8)  Просмотр конфигурации 
 9)  Перенастроить 
 10) Переключить приоритет IPv4/IPv6 
-11) Обновить hihy 
+
 12) ACL маршрутизация доменов 
 13) Просмотр статистики 
 14) Просмотр логов 

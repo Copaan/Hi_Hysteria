@@ -1,0 +1,3 @@
+PASS: uninstall preserves system yq, unrelated firewall chain and cron
+PASS: install, private files, existing-install refusal, restart, stop/start and disabled self-update
+f29228e1754ceb8a8989e70bae3579d80336cecf5171f5c72c6d04636283b012  /usr/bin/hihy

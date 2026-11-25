@@ -1,0 +1,4 @@
+6) Status
+hysteria is running
+Current version: v2.14.0
+PASS: a new boot restores the actual daemon, owned IPv4/IPv6 firewall rules, private mode and normal scheduling

@@ -14,7 +14,7 @@ commitServerEdit() (
                 cp -p -- "$dir/backup.old" "$HIHY_ROOT_DIR/conf/backup.yaml" || rc=1
                 [ ! -f "$dir/acl.old" ] || cp -p -- "$dir/acl.old" "$HIHY_ROOT_DIR/acl/acl.txt" || rc=1
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$dir"
         return "$rc"
@@ -32,7 +32,7 @@ commitServerEdit() (
     if localCoreVersionAtLeast 2.14.0; then
         "$HIHY_ROOT_DIR/bin/appS" --disable-update-check acl test -c "$dir/config.new.yaml" --no-resolve example.invalid:443 >"$dir/acl-test.log" 2>&1 || return 1
     fi
-    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stopped=true; stop || return 1; fi
     startInstallValidationProcess "$dir/config.new.yaml" "$dir/validation.log" || return 1
     waitForValidationOutcome "$dir/validation.log" 15 || return 1
     stopValidationProcess

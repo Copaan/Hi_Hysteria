@@ -7,3 +7,5 @@
 *.sha256 text eol=lf
 SHA256SUMS text eol=lf
 .gitignore text eol=lf
+.gitattributes text eol=lf
+*.log text eol=lf

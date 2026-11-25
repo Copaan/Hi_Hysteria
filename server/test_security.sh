@@ -118,3 +118,17 @@ reject validateCoreArchitecture "$TEST_ROOT/arm64.elf" amd64
     assert test ! -e "$TEST_ROOT/destination-core"
 )
 printf 'PASS: interrupted downloads and wrong ELF architecture fail before execution\n'
+
+(
+    printf old >"$HIHY_ROOT_DIR/bin/appS"
+    printf running >"$TEST_ROOT/service-state"
+    getLocalHysteriaVersion() { echo app/v2.13.0; }
+    getServiceRunState() { cat "$TEST_ROOT/service-state"; }
+    fetchHysteriaCandidate() { printf candidate >"$2"; }
+    stop() { printf stopped >"$TEST_ROOT/service-state"; return 1; }
+    start() { printf running >"$TEST_ROOT/service-state"; }
+    reject updateHysteriaCore app/v2.14.0
+    assert test "$(cat "$TEST_ROOT/service-state")" = running
+    assert test "$(cat "$HIHY_ROOT_DIR/bin/appS")" = old
+)
+printf 'PASS: a failed stop operation also restores the previous running state\n'

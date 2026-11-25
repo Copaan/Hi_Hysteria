@@ -1,0 +1,44 @@
+All translation files and ordered placeholders are consistent.
+hihy: Only HTTPS downloads are allowed.
+hihy: SHA256 verification failed.
+hihy: Invalid stable Hysteria version.
+hihy: Missing or duplicate checksum for unknown.
+hihy: WARP automatic installation requires a reviewed commit URL and SHA256. Install WARP separately or supply both.
+hihy: Candidate core failed configuration validation.
+PASS: security, serialization, offline menu, upgrade rollback and firewall ownership
+hihy: Downloaded core has the wrong ELF architecture.
+PASS: interrupted downloads and wrong ELF architecture fail before execution
+PASS baseline/native: connected
+PASS baseline/mihomo: connected
+PASS baseline/sing-box: connected
+PASS native: wrong auth and certificate rejected
+PASS mihomo: wrong auth and certificate rejected
+PASS sing-box: wrong auth and certificate rejected
+PASS gecko-ech/native: connected
+PASS gecko-ech/mihomo: connected
+PASS gecko-ech/sing-box: connected
+PASS hopping/native: connected
+PASS hopping/mihomo: connected
+PASS hopping/sing-box: connected
+PASS failed reconfiguration restored running service
+PASS sniff.enable enforces HTTP Host ACL for an IP destination
+PASS verified default site serves over certificate-verified HTTPS
+{
+  "passed": [
+    "baseline/native: connected",
+    "baseline/mihomo: connected",
+    "baseline/sing-box: connected",
+    "native: wrong auth and certificate rejected",
+    "mihomo: wrong auth and certificate rejected",
+    "sing-box: wrong auth and certificate rejected",
+    "gecko-ech/native: connected",
+    "gecko-ech/mihomo: connected",
+    "gecko-ech/sing-box: connected",
+    "hopping/native: connected",
+    "hopping/mihomo: connected",
+    "hopping/sing-box: connected",
+    "failed reconfiguration restored running service",
+    "sniff.enable enforces HTTP Host ACL for an IP destination",
+    "verified default site serves over certificate-verified HTTPS"
+  ]
+}

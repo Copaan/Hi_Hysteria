@@ -2608,7 +2608,7 @@ writeHysteriaConfig() (
                     [ ! -d "$backup/$part" ] || cp -a -- "$backup/$part" "$HIHY_ROOT_DIR/$part" || rc=1
                 done
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$transaction"
         return "$rc"
@@ -2627,7 +2627,7 @@ writeHysteriaConfig() (
         grep -Fxv 'reject(all, udp/443)' "$backup/acl/acl.txt" >"$candidate/acl/acl.txt" || [ $? -eq 1 ] || return 1
         if [ "$block_http3" = true ]; then printf '%s\n' 'reject(all, udp/443)' >>"$candidate/acl/acl.txt"; fi
     fi
-    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stopped=true; stop || return 1; fi
     if [ "$useAcme" = true ]; then timeout=60; [ "$useDns" = true ] || allowPort tcp 80 || return 1; fi
     startInstallValidationProcess "$candidate/conf/config.yaml" "$transaction/validation.log" || return 1
     if ! waitForValidationOutcome "$transaction/validation.log" "$timeout"; then
@@ -2685,7 +2685,7 @@ commitServerEdit() (
                 cp -p -- "$dir/backup.old" "$HIHY_ROOT_DIR/conf/backup.yaml" || rc=1
                 [ ! -f "$dir/acl.old" ] || cp -p -- "$dir/acl.old" "$HIHY_ROOT_DIR/acl/acl.txt" || rc=1
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$dir"
         return "$rc"
@@ -2703,7 +2703,7 @@ commitServerEdit() (
     if localCoreVersionAtLeast 2.14.0; then
         "$HIHY_ROOT_DIR/bin/appS" --disable-update-check acl test -c "$dir/config.new.yaml" --no-resolve example.invalid:443 >"$dir/acl-test.log" 2>&1 || return 1
     fi
-    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stopped=true; stop || return 1; fi
     startInstallValidationProcess "$dir/config.new.yaml" "$dir/validation.log" || return 1
     waitForValidationOutcome "$dir/validation.log" 15 || return 1
     stopValidationProcess
@@ -2830,7 +2830,7 @@ updateHysteriaCore() (
                 stop >/dev/null 2>&1 || true
                 mv -f -- "$temp/previous" "$core" || rc=1
             fi
-            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ] && [ "$(getServiceRunState)" != running ]; then start || rc=1; fi
         fi
         rm -rf -- "$temp"
         return "$rc"
@@ -2842,8 +2842,8 @@ updateHysteriaCore() (
     cp -p -- "$core" "$temp/previous" || return 1
     if [ "$(getServiceRunState)" = running ]; then
         was_running=true
-        stop || return 1
         stopped=true
+        stop || return 1
     fi
     startInstallValidationProcess "$HIHY_ROOT_DIR/conf/config.yaml" "$temp/validation.log" "$temp/candidate" || return 1
     waitForValidationOutcome "$temp/validation.log" 60 || { securityError 'Candidate core failed configuration validation.'; return 1; }

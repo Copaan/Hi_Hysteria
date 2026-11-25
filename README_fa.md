@@ -1,5 +1,7 @@
 # Hi Hysteria
 
+> **Security revision ver1.20-secure.1 (2026-11-26)**: install only from a complete reviewed local bundle. See [installation and trust boundaries](md/security-install.md) and [actual test coverage](md/security-test-report.md). Core baseline: 2.14.0. Historical demos below do not describe the current update behavior, scheduling or private export paths.
+
 [English](README_en.md) | [中文](README.md) | **فارسی** | [Русский](README_ru.md)
 
 ##### (2026/08/23) ver1.20
@@ -81,14 +83,14 @@ mihomo/sing-box از mimic پشتیبانی نمی‌کنند — فقط پیک�
   * تعداد دستگاه‌های آنلاین
   * اتصالات فعال و موارد دیگر
 * قوانین مسیریابی دامنه مبتنی بر ACL با پشتیبانی از مسدودسازی دامنه
-* پشتیبانی از تمام سیستم‌عامل‌ها و معماری‌های رایج:
-  * سیستمعامل: Arch, Alpine, RHEL, CentOS, AlmaLinux, Debian, Ubuntu, Rocky Linux و غیره
-  * معماری: x86_64, i386/i686, aarch64/arm64, armv7, s390x, ppc64le
+* سیستم‌های هدف نصب تازه در این نسخه:
+  * سیستم‌عامل: Debian / Ubuntu؛ مسیرهای قدیمی دیگر در این دور آزموده نشده‌اند
+  * وابستگی‌های ثابت: amd64 / arm64؛ آزمایش‌شده روی Debian 12 amd64
 * تولید کد QR برای لینک‌های اشتراک‌گذاری hy2 مستقیماً در ترمینال — بدون دردسر کپی-پیست
 * تولید فایل‌های پیکربندی اصلی کلاینت Hysteria2 با مجموعه کامل پارامترهای کلاینت
-* راه‌اندازی فرآیند با اولویت بالا برای Hysteria2 — اولویت با سرعت
+* زمان‌بندی عادی فرآیند، بدون اولویت بلادرنگ chrt
 * پرش پورت و دیمن Hysteria2 از طریق اسکریپت‌های شروع خودکار مدیریت می‌شوند برای گسترش‌پذیری و سازگاری بهتر
-* اسکریپت نصب Hysteria v1 به عنوان یک گزینه حفظ شده است
+* HY1 قدیمی در شاخه تاریخی باقی مانده و در این بسته HY2 نیست
 * محاسبه BDP (حاصل‌ضرب پهنای‌باند-تأخیر) برای تنظیم پارامترهای QUIC برای سناریوهای متنوع
 * پشتیبانی از خروجی SOCKS5، از جمله راه‌اندازی خودکار خروجی WARP
 * پشتیبانی از LXC، OpenVZ، KVM و تمام پلتفرم‌های مجازی‌سازی رایج
@@ -123,7 +125,8 @@ mihomo/sing-box از mimic پشتیبانی نمی‌کنند — فقط پیک�
 
 ```
 su - root # تغییر به کاربر root.
-bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/install.sh)
+# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+bash install.sh --lang fa
 ```
 
 ### پیکربندی

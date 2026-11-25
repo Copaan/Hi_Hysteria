@@ -1,0 +1,3 @@
+2) Uninstall hysteria
+Hysteria uninstalled completely!
+PASS: post-reboot uninstall removes owned service and firewall state

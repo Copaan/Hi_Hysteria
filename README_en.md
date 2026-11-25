@@ -1,5 +1,7 @@
 # Hi Hysteria
 
+> **Security revision ver1.20-secure.1 (2026-11-26)**: install only from a complete reviewed local bundle. See [installation and trust boundaries](md/security-install.md) and [actual test coverage](md/security-test-report.md). Core baseline: 2.14.0. Historical demos below do not describe the current update behavior, scheduling or private export paths.
+
 **English** | [中文](README.md) | [فارسی](README_fa.md) | [Русский](README_ru.md)
 
 ##### (2026/08/23) ver1.20
@@ -81,21 +83,21 @@ There may be bugs — please file an issue if you find any. Stars welcome! Your 
   * Online device count
   * Active connections and more
 * ACL-based domain routing rules with domain blocking support
-* Supports all mainstream operating systems and architectures:
-  * OS: Arch, Alpine, RHEL, CentOS, AlmaLinux, Debian, Ubuntu, Rocky Linux, etc.
-  * Arch: x86_64, i386/i686, aarch64/arm64, armv7, s390x, ppc64le
+* Fresh-install target for this revision:
+  * OS: Debian / Ubuntu; other legacy paths have not been verified
+  * Pinned dependencies: amd64 / arm64; tested on Debian 12 amd64
 * QR code generation for hy2 share links directly in the terminal — less copy-paste hassle
 * Generate Hysteria2 original client config files with the full set of client parameters
-* High-priority process launch for Hysteria2 — speed first
+* Normal-priority process scheduling; no realtime chrt policy
 * Port hopping and Hysteria2 daemon managed via auto-start scripts for better extensibility and compatibility
-* Hysteria v1 installation script preserved as an option
+* Legacy HY1 remains in the historical branch and is not in this HY2 bundle
 * BDP (Bandwidth-Delay Product) calculation to tune QUIC parameters for diverse scenarios
 * SOCKS5 outbound support, including automatic WARP outbound setup
 * Supports LXC, OpenVZ, KVM and all mainstream virtualization platforms
 * Realm mode (P2P hole-punching) — establish connections without a public IP or port forwarding
 * Realm through Cloudflare WARP — connect to Hysteria2 via WARP IP, hiding the real server IP (effectively behind CF CDN)
 * Mimic (TCP disguise, hysteria v2.12.0+): off by default; both ends need Linux+root and the mimic module; mutually exclusive with port hopping
-* Timely updates — adapted within 24 hours of Hysteria2 releases
+* Explicit, verified core updates; no automatic script update
 
 </details>
 
@@ -123,12 +125,13 @@ There may be bugs — please file an issue if you find any. Stars welcome! Your 
 
 ```
 su - root # switch to root user.
-bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/install.sh)
+# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+bash install.sh --lang en
 ```
 
 ### Configuration
 
-After first install: run `hihy` to open the menu. If you've updated the hihy script, use option `9` to get the latest config.
+Run hihy to open the local menu. Option 9 reconfigures; only option 7 explicitly updates the core.
 
 You can directly invoke functions by number, e.g. `hihy 5` restarts hysteria2.
 
@@ -154,7 +157,7 @@ Tips: hihy  command to run this script again.
 8)  View Config 
 9)  Reconfigure 
 10) Switch IPv4/IPv6 Priority 
-11) Update hihy 
+
 12) ACL Domain Routing 
 13) View Statistics 
 14) View Logs 

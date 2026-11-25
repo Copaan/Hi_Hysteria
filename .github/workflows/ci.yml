@@ -1,121 +1,66 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
-env:
-  YQ_VERSION: v4.44.3
-
+  workflow_call:
+permissions:
+  contents: read
 jobs:
   lint-and-test:
-    name: Build, lint & unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install toolchain (shellcheck, yq, qrencode)
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned private test tooling
+        shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck qrencode
-          sudo wget -q -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          sudo chmod +x /usr/local/bin/yq
-
-      - name: Build hy2.sh from modules
-        run: bash scripts/build.sh
-
-      - name: Verify artifact/source sync (server/hy2.sh committed up to date)
+          sudo apt-get install -y -qq shellcheck qrencode openssl ca-certificates python3
+          export HIHY_YQ_BIN="$RUNNER_TEMP/hihy-tools/yq"
+          source server/hy2.sh
+          installPrivateYq
+          echo "$(dirname "$HIHY_YQ_BIN")" >>"$GITHUB_PATH"
+      - name: Check generated scripts, integrity and translations
         run: |
-          git diff --exit-code server/hy2.sh \
-            || { echo "::error::server/hy2.sh is out of sync with server/src/ — run 'bash scripts/build.sh' and commit the result"; exit 1; }
+          bash scripts/build.sh
+          git diff --exit-code server/hy2.sh server/SHA256SUMS
           bash server/test_build.sh
-
-      - name: shellcheck (error severity)
-        run: |
-          shellcheck -S error \
-            server/hy2.sh server/install.sh \
-            server/test_bootstrap_install.sh server/test_install_recovery.sh \
-            server/test_auto_config.sh server/test_client_config.sh server/test_build.sh \
-            scripts/build.sh scripts/i18n-validate.sh scripts/i18n-extract.sh
-
-      - name: i18n catalogs consistency
-        run: bash scripts/i18n-validate.sh
-
-      # 客户端配置的正确性只有真实内核说了算:yq/json 能解析不代表内核接受
-      # (未知字段、缺失必填项都会让整份配置被拒载)。拉稳定版 mihomo + sing-box 做加载校验。
-      - name: Fetch mihomo & sing-box for client-config validation
-        run: |
-          mkdir -p "$RUNNER_TEMP/cores"
-          mihomo_url=$(gh api repos/MetaCubeX/mihomo/releases/latest \
-            --jq '.assets[]|select(.name|test("linux-amd64-compatible-v.*\\.gz$"))|.browser_download_url' | head -1)
-          curl -fsSL "$mihomo_url" -o "$RUNNER_TEMP/cores/mihomo.gz"
-          gunzip "$RUNNER_TEMP/cores/mihomo.gz"
-          chmod +x "$RUNNER_TEMP/cores/mihomo"
-          sb_tag=$(gh api repos/SagerNet/sing-box/releases --jq '[.[]|select(.prerelease==false)][0].tag_name')
-          sb_ver="${sb_tag#v}"
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/${sb_tag}/sing-box-${sb_ver}-linux-amd64.tar.gz" \
-            -o "$RUNNER_TEMP/cores/sb.tar.gz"
-          tar xzf "$RUNNER_TEMP/cores/sb.tar.gz" --wildcards --strip-components=1 -O '*/sing-box' \
-            > "$RUNNER_TEMP/cores/sing-box"
-          chmod +x "$RUNNER_TEMP/cores/sing-box"
-          "$RUNNER_TEMP/cores/mihomo" -v | head -1
-          "$RUNNER_TEMP/cores/sing-box" version | head -1
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Unit tests
+          bash scripts/i18n-validate.sh
+          shellcheck -S error server/hy2.sh server/install.sh server/test_*.sh scripts/*.sh
+      - name: Focused tests
         run: |
           bash server/test_bootstrap_install.sh
           bash server/test_install_recovery.sh
+          bash server/test_security.sh
           bash server/test_auto_config.sh
           bash server/test_client_config.sh
-        env:
-          HIHY_TEST_MIHOMO_BIN: ${{ runner.temp }}/cores/mihomo
-          HIHY_TEST_SINGBOX_BIN: ${{ runner.temp }}/cores/sing-box
-
-  e2e-install:
-    name: E2E autoinstall (debian:12 container)
-    runs-on: ubuntu-latest
+          bash scripts/package.sh
+  linux-integration:
     needs: lint-and-test
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:12', 'ubuntu:24.04']
     steps:
-      - uses: actions/checkout@v4
-
-      - name: One-key install, restart & uninstall inside container
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Real install, rollback and three-client transport
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
         run: |
-          docker run --rm --cap-add=NET_ADMIN -v "$PWD":/repo:ro debian:12 bash -c '
-            set -eo pipefail
+          docker run --rm --privileged --init -v "$PWD":/repo:ro "$TEST_IMAGE" bash -c '
+            set -euo pipefail
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq >/dev/null
-            apt-get install -y -qq wget curl lsof iptables bc dnsutils qrencode cron procps openssl util-linux >/dev/null
-            mkdir -p /etc/hihy/i18n /etc/hihy/conf
-            cp /repo/server/i18n/en.json /etc/hihy/i18n/hy2.sh.en.json
-            printf "HIHY_LANG=en\n" > /etc/hihy/conf/i18n.conf
-            # 模拟 bootstrap:先落 launcher 再执行(官方安装路径)
-            cp /repo/server/hy2.sh /usr/bin/hihy && chmod +x /usr/bin/hihy
-
-            HIHY_AUTO_PORT=34567 hihy autoinstall | tee /tmp/install.log
-            grep -q "Installation complete" /tmp/install.log
-            # 全新安装不允许出现残留警告 (回归: classifyInstallState 误把 launcher 当残留)
-            # 注意不能写 "! grep":set -e 对 ! 前缀的失败不生效,断言会静默放水
-            if grep -q "Incomplete installation residue detected" /tmp/install.log; then
-              echo "::error::residue warning shown on fresh install"; exit 1
-            fi
-
-            pid=$(cat /var/run/hihy.pid); kill -0 "$pid"
-            # 服务必须运行在独立会话 (回归: Ctrl+C 组播杀死服务)
-            [ "$(ps -o sid= -p "$pid" | tr -d " ")" = "$pid" ]
-
-            hihy restart
-            sleep 1
-            kill -0 "$(cat /var/run/hihy.pid)"
-
-            hihy uninstall | tee /tmp/uninstall.log
-            grep -q "Hysteria uninstalled completely" /tmp/uninstall.log
-            # 锚定 ^:bash -c 内联脚本自身的命令行也含该路径,不锚定会匹配到 PID 1(driver 自己)
-            if pgrep -f "^/etc/hihy/bin/appS"; then
-              echo "::error::appS still running after uninstall"; exit 1
-            fi
-            echo "E2E OK"
+            apt-get update -qq
+            apt-get install -y -qq bash curl wget ca-certificates openssl lsof iptables iproute2 bc dnsutils qrencode cron procps util-linux python3
+            touch /etc/hihy-test-environment
+            cd /repo
+            bash server/test_lifecycle.sh
+            bash scripts/fetch-test-cores.sh /opt/hihy-test-cores
+            export HIHY_TEST_CORES=/opt/hihy-test-cores
+            bash server/test_server_edits.sh
+            python3 server/test_transport.py
+            hihy uninstall
+            test ! -e /etc/hihy
           '

@@ -1,5 +1,7 @@
 # Hi Hysteria
 
+> **安全整改版 ver1.20-secure.1（2026-11-26）**：仅使用审核后的完整本地安装包。安装步骤、主动内核升级及已知边界见 [安全安装说明](md/security-install.md)，实际验收范围见 [测试记录](md/security-test-report.md)。当前默认核心为 2.14.0；后文历史演示中的远程更新、实时调度和旧导出路径不适用于此版本。
+
 [English](README_en.md) | **中文** | [فارسی](README_fa.md) | [Русский](README_ru.md)
 
 ##### (2026/08/23) ver1.20
@@ -81,21 +83,21 @@ mihomo/sing-box 不支持 mimic，仅输出原生配置
   * 在线设备数量
   * 当前活跃的连接等信息
 * 提供仅通过ACL实现的分流域名规则，以及屏蔽相应域名的请求
-* 支持当前市面上所有主流的操作系统与架构：
-  * 操作系统：Arch、Alpine、RHEL、Centos、AlamaLinux、Debian、Ubuntu、Rocky Linux等
-  * 架构：x86_64、i386|i686、aarch64|arm64、armv7、s390x、ppc64le
+* 本轮全新安装的目标系统与架构：
+  * 操作系统：Debian / Ubuntu；其他系统沿用旧路径，未完成本轮验收
+  * 固定依赖摘要覆盖 amd64 / arm64；实测为 Debian 12 amd64
 * 支持对hy2分享链接生成二维码输出到终端，减少繁琐的复制粘贴过程
 * 支持生成hysteria2 original client配置文件，保留最全的客户端参数
-* 使用高优先级启动hysteria2进程，保持速度优先
+* 使用普通调度策略，不启用实时 chrt 优先级
 * 端口跳跃与hysteria2的守护进程使用自启脚本管理，提供更强的拓展性与兼容性
-* 保留提供hysteria v1的安装脚本，供用户选择
+* 旧 HY1 位于历史分支，不包含在此 HY2 本地安装包中
 * 计算BDP（带宽延迟积）来调整quic参数，适应多种多样的需求场景
 * 支持添加socks5出站，包括自动添加warp出站功能
 * 支持lxc、openvz、kvm等现在的所有主流的虚拟化方式
 * 支持Realm模式（P2P穿透），无需公网IP和端口转发即可建立连接
 * 支持使用Realm穿透cloudflare warp, 使用warp ip连接hysteria2, 隐藏真实ip（变相套CF CDN）
 * 支持 Mimic(伪装 TCP，hysteria v2.12.0+)：默认关闭；两端需 Linux+root 与 mimic 模块，启用后与端口跳跃互斥
-* 更新及时，hysteria2更新后24h内完成适配
+* 主动校验升级内核；不自动更新脚本
 
 </details>
 
@@ -123,12 +125,13 @@ mihomo/sing-box 不支持 mimic，仅输出原生配置
 
 ```
 su - root #switch to root user.
-bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/install.sh)
+# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+bash install.sh --lang zh
 ```
 
 ### 配置过程
 
-首次安装后: `hihy`命令调出菜单,如更新了hihy脚本，请执行选项 `9`获得最新的配置
+首次安装后用 hihy 调出本地菜单；选项 9 只重新配置，选项 7 才主动升级内核。
 
 支持通过数字序号直接调取相应功能，例如`hihy 5` 将会重启hysteria2
 
@@ -154,7 +157,7 @@ Tips: hihy  命令再次运行本脚本.
 8)  查看当前配置 
 9)  重新配置 
 10) 切换ipv4/ipv6优先级 
-11) 更新hihy 
+
 12) 域名分流/ACL管理 
 13) 查看hysteria2统计信息 
 14) 查看实时日志 

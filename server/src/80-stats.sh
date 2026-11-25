@@ -37,9 +37,9 @@ format_bytes() {
     fi
 }
 
-getHysteriaTrafic() {
+getHysteriaTrafic() (
     local api_port=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "trafficPort" "")
-    local secret=$(getYamlValue "/etc/hihy/conf/config.yaml" "auth.password" 2>/dev/null)
+    local secret=$(getYamlValue "/etc/hihy/conf/config.yaml" "trafficStats.secret" 2>/dev/null)
 
     # 未安装/配置缺失时 trafficPort 拿不到,直接报错而不是对着乱值发请求
     if ! isPositiveInt "${api_port}"; then
@@ -47,8 +47,13 @@ getHysteriaTrafic() {
         return 1
     fi
 
+    local header_dir
+    local -a CURL_OPTS=()
+    header_dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$header_dir"' EXIT
     if [ -n "$secret" ]; then
-        CURL_OPTS=(-H "Authorization: $secret")
+        printf 'Authorization: %s\n' "$secret" >"$header_dir/header"
+        CURL_OPTS=(-H "@$header_dir/header")
     else
         CURL_OPTS=()
     fi
@@ -59,7 +64,7 @@ getHysteriaTrafic() {
     echoColor green "$(i18n traffic_stats_label)"
     # 用 yq 解析(脚本硬依赖):grep 正则对 JSON 的 { 转义/空白格式差异太脆弱,401/HTML 响应会被静默吞掉
     local traffic_resp traffic_out
-    traffic_resp=$(curl -s "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/traffic")
+    traffic_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/traffic") || return 1
     if [ -n "${traffic_resp}" ]; then
         traffic_out=$(printf '%s' "${traffic_resp}" | yq -p json -o tsv 'to_entries[] | [.key, .value.tx, .value.rx] | @tsv' 2>/dev/null)
         if [ -n "${traffic_out}" ]; then
@@ -77,7 +82,7 @@ getHysteriaTrafic() {
     # 在线用户部分保持不变
     echoColor green "\n$(i18n traffic_online_users_label)"
     local online_resp online_out
-    online_resp=$(curl -s "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/online")
+    online_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/online") || return 1
     if [ -n "${online_resp}" ]; then
         online_out=$(printf '%s' "${online_resp}" | yq -p json -o tsv 'to_entries[] | [.key, .value] | @tsv' 2>/dev/null)
         if [ -n "${online_out}" ]; then
@@ -90,7 +95,7 @@ getHysteriaTrafic() {
     fi
 
     echoColor green "\n$(i18n traffic_active_connections_label)"
-    STREAMS_OUTPUT=$(curl -s "${CURL_OPTS[@]}" -H "Accept: text/plain" "http://127.0.0.1:${api_port}/dump/streams")
+    STREAMS_OUTPUT=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" -H "Accept: text/plain" "http://127.0.0.1:${api_port}/dump/streams") || return 1
 
     if [ "$(echo "$STREAMS_OUTPUT" | wc -l)" -le 1 ]; then
         echo "$(i18n traffic_no_active_connections)"
@@ -110,7 +115,7 @@ getHysteriaTrafic() {
         echo "------|----------------|--------|-----|---------|---------|--------|--------|----------------------"
 
         # 使用临时文件存储排序数据
-        temp_file=$(mktemp)
+        temp_file="$header_dir/streams"
 
         echo "$STREAMS_OUTPUT" | awk \
             -v estab="$(i18n traffic_status_estab)" \
@@ -184,7 +189,7 @@ getHysteriaTrafic() {
     fi
 
     echo "$(i18n traffic_separator_line)"
-}
+)
 
 # 辅助函数：格式化时间显示
 format_time_display() {

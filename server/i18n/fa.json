@@ -123,11 +123,11 @@
   "client_mihomo_gecko_skip": "توجه: mihomo از رمزگذاری gecko پشتیبانی نمی‌کند؛ از پیکربندی اصلی یا sing-box استفاده کنید. پیکربندی mihomo رد شد.",
   "client_mihomo_mimic_skip": "توجه: mihomo از mimic پشتیبانی نمی‌کند؛ از کلاینت بومی Hysteria روی لینوکس استفاده کنید. پیکربندی mihomo رد شد.",
   "client_only_block_http3_tip": "نکته: برای تجربه بهتر، توصیه می‌شود مسدودسازی QUIC/HTTP3/UDP 443 را روی کلاینت فعال کنید.",
-  "client_singbox_bbr_profile_note": "توجه: sing-box فقط از نسخه 1.14 (هنوز بتا) از bbr_profile پشتیبانی می‌کند، بنابراین درج نشد؛ پروفایل BBR «%s» فقط روی کلاینت بومی اعمال می‌شود.",
+  "client_singbox_bbr_profile_note": "پروفایل BBR «%s» به sing-box نسخه 1.14 یا جدیدتر نیاز دارد.",
   "client_singbox_file_hint": "📦 [sing-box / SFA / SFI / SFM / SFT] فایل پیکربندی sing-box: %s",
   "client_singbox_mimic_skip": "توجه: sing-box از mimic پشتیبانی نمی‌کند؛ از کلاینت بومی Hysteria روی لینوکس استفاده کنید. پیکربندی sing-box رد شد.",
-  "client_singbox_realm_beta_warning": "هشدار: فیلد realm در sing-box نیازمند نسخه 1.14+ است که هنوز نسخه پایدار ندارد. sing-box پایدار این پیکربندی را بارگذاری نمی‌کند؛ برای حالت Realm از کلاینت بومی Hysteria2 یا نسخه بتای 1.14 استفاده کنید.",
-  "client_singbox_version_hint": "توجه: نیازمند sing-box 1.12+ است (realm نیازمند 1.14+ که فعلاً فقط بتا است).",
+  "client_singbox_realm_beta_warning": "Realm به sing-box نسخه 1.14 یا جدیدتر نیاز دارد. نسخه مبنای آزمون 1.14.4 است.",
+  "client_singbox_version_hint": "نسخه مبنای آزمون sing-box 1.14.4؛ Realm، Gecko و پروفایل BBR به 1.14+ نیاز دارند.",
   "cloudflare_token_prompt": "لطفاً cloudflare_api_token را وارد کنید:",
   "cmd_title_acl": "12) مدیریت ACL",
   "cmd_title_autoinstall": "نصب یک‌کلیکی hysteria2 (بدون تعامل)...",
@@ -280,7 +280,7 @@
   "masquerade_disabled_selected": "پوشش غیرفعال شد",
   "masquerade_file_hint": "پیش‌نمایش پیش‌فرض: https://hfiprogramming.github.io/mikutap/",
   "masquerade_file_label": "پوشه فایل وب‌سایت masquerade: ",
-  "masquerade_file_prompt": "لطفاً پوشه فایل وب‌سایت masquerade را وارد کنید (پیش‌فرض: /etc/hihy/file؛ mikutap به‌طور خودکار دانلود می‌شود):",
+  "masquerade_file_prompt": "پوشه محلی وب‌سایت را وارد کنید (پیش‌فرض /etc/hihy/file: دانلود نسخه ثابت mikutap با تأیید SHA256):",
   "masquerade_prompt": "(10/13) وب‌سایت پوششی: پورت را شبیه یک سایت HTTPS عادی جلوه می‌دهد. حالت را انتخاب کنید:",
   "masquerade_proxy_hint": "این سایت را reverse proxy کنید اما نام دامنه‌های داخل صفحه را جایگزین نکنید.",
   "masquerade_proxy_label": "آدرس proxy masquerade: ",
@@ -540,7 +540,7 @@
   "mimic_installed": "mimic %s نصب شد، ماژول کرنل بارگذاری شد (modprobe mimic) و در بوت فعال شد",
   "mimic_download_fail": "دانلود یا تأیید mimic ناموفق بود",
   "mimic_extract_fail": "استخراج بسته mimic ناموفق بود",
-  "mimic_unsupported_arch": "mimic از معماری %s پشتیبانی نمی‌کند (فقط amd64/arm64)؛ mimic فعال نشد",
+  "mimic_unsupported_arch": "Mimic از معماری %s پشتیبانی نمی‌کند (فقط amd64/arm64)؛ پیکربندی متوقف شد.",
   "mimic_module_manual_hint": "ماژول کرنل mimic به‌صورت خودکار کامپایل نشد (dkms/هدر کرنل موجود نیست؟). طبق Getting Started دستی نصب کنید و دوباره تلاش کنید: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md",
-  "mimic_install_fallback": "نصب خودکار mimic ناموفق بود؛ غیرفعال شد (سرویس بدون مشکل کار می‌کند). پس از رفع مشکل با hihy 9 دوباره فعال کنید"
+  "mimic_install_fallback": "نصب Mimic ناموفق بود؛ پیکربندی متوقف و سرویس موجود حفظ شد."
 }

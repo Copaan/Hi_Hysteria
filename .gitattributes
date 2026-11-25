@@ -1,0 +1,9 @@
+*.sh text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.sha256 text eol=lf
+SHA256SUMS text eol=lf
+.gitignore text eol=lf

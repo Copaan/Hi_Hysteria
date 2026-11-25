@@ -1,32 +1,5 @@
 #!/bin/bash
 
-# 从远端(主源+镜像)拉取 hihy 脚本到目标路径:临时文件 -> 内容校验(hihyV= 标记) -> 原子 mv。
-# 目标可能正是正在执行的脚本,rename 只换 inode,运行中的进程不受影响。
-installHihyScriptFromRemote() {
-    local dest="$1"
-    local dest_dir temp_path
-
-    dest_dir="$(dirname "$dest")"
-    mkdir -p "$dest_dir" || return 1
-    temp_path="$(mktemp "$dest_dir/.hihy.tmp.XXXXXX")" || return 1
-
-    if ! downloadToFile "$HIHY_REMOTE_SCRIPT_URL" "$temp_path" \
-        && ! downloadToFile "$HIHY_REMOTE_SCRIPT_MIRROR_URL" "$temp_path"; then
-        rm -f "$temp_path"
-        return 1
-    fi
-    # 内容合法性校验:必须是带版本标记的 hihy 脚本,而非镜像返回的错误页
-    if ! grep -q '^hihyV=' "$temp_path"; then
-        rm -f "$temp_path"
-        return 1
-    fi
-    chmod +x "$temp_path"
-    mv "$temp_path" "$dest" || {
-        rm -f "$temp_path"
-        return 1
-    }
-}
-
 installHihyLauncher() {
     local source_path="${1:-${BASH_SOURCE[0]}}"
     local bin_link="${2:-$HIHY_BIN_LINK}"
@@ -49,7 +22,8 @@ installHihyLauncher() {
             return 1
         }
     elif [ ! -f "$bin_link" ]; then
-        installHihyScriptFromRemote "$bin_link" || return 1
+        securityError 'Local hihy script is missing; reinstall the complete reviewed package.'
+        return 1
     fi
 
     if [ -f "$bin_link" ]; then
@@ -60,25 +34,48 @@ installHihyLauncher() {
     return 1
 }
 
-downloadToFile() {
+downloadToFile() (
     local url="$1"
     local output_path="$2"
+    local attempt temp
+    [[ "$url" == https://* ]] || { securityError 'Only HTTPS downloads are allowed.'; return 1; }
+    [ ! -L "$output_path" ] || return 1
+    temp=$(mktemp "$(dirname "$output_path")/.download.XXXXXXXX") || return 1
+    trap 'rm -f -- "$temp"' EXIT
+    for ((attempt=0; attempt<=HIHY_DOWNLOAD_RETRIES; attempt++)); do
+        if curl --proto '=https' --proto-redir '=https' -fSL --silent --show-error \
+            --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" \
+            -o "$temp" "$url" && [ -s "$temp" ]; then
+            chmod 600 "$temp" && mv -f -- "$temp" "$output_path" && return 0
+        fi
+    done
+    rm -f -- "$temp"
+    return 1
+)
 
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -O "$output_path" "$url"
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$output_path" "$url"
-    else
-        return 1
+# Verify a downloaded artifact before making it available to its caller.
+downloadVerifiedFile() (
+    local url="$1" dest="$2" expected="${3,,}" temp actual
+    isValidSHA256 "$expected" && [ ! -L "$dest" ] || return 1
+    temp=$(mktemp "$(dirname "$dest")/.verified.XXXXXXXX") || return 1
+    trap 'rm -f -- "$temp"' EXIT
+    if downloadToFile "$url" "$temp"; then
+        actual=$(sha256sum "$temp" | awk '{print $1}')
+        if [ "$actual" = "$expected" ]; then
+            mv -f -- "$temp" "$dest" && return 0
+        fi
+        securityError 'SHA256 verification failed.'
     fi
-}
+    rm -f -- "$temp"
+    return 1
+)
 
 fetchRemoteBodyFromSources() {
     local url
     local response
 
     for url in "$@"; do
-        if response=$(curl -fsSL --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
+        if response=$(curl --proto '=https' --proto-redir '=https' -fsSL --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
             printf '%s' "$response"
             return 0
         fi
@@ -93,7 +90,7 @@ fetchRemoteHeadersFromSources() {
 
     for url in "$@"; do
         # -L: GitHub /releases/latest 可能先 301 到新仓库,再 302 到 tag/;不跟随则 Location 里没有 tag/
-        if response=$(curl -fsSI -L --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
+        if response=$(curl --proto '=https' --proto-redir '=https' -fsSI -L --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
             printf '%s' "$response"
             return 0
         fi
@@ -162,38 +159,37 @@ getListenRangePart() {
 }
 
 addOrUpdateYaml() {
-    local file=$1
-    local keyPath=$2
-    local value=$3
-    local valueType=${4:-"auto"} # auto, string, number, bool
-
-    # 检查文件是否存在，如果不存在则创建一个空文件
-    if [[ ! -f "$file" ]]; then
-        touch "$file"
+    local file="$1" keyPath="$2" value="$3" valueType="${4:-auto}" temp expression
+    [[ "$keyPath" =~ ^[A-Za-z_][A-Za-z0-9_.-]*(\[[0-9]+\])?([.][A-Za-z0-9_-]+(\[[0-9]+\])?)*$ ]] || return 1
+    [ ! -L "$file" ] || return 1
+    if [ "$valueType" = auto ]; then
+        case "$keyPath" in
+            *password|*Password|auth|*token*|*secret*|remarks|*name|*Name|domain|*Address|*URI|*sni|*url|*addr|*username|*content|*custom-stuff|*headers.*) valueType=string ;;
+            *)
+                if [[ "$value" == true || "$value" == false ]]; then valueType=bool
+                elif [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then valueType=number
+                else valueType=string; fi ;;
+        esac
     fi
-
-    # 将值转换为 JSON 格式以避免解析错误
-    local jsonValue
-    if [[ $valueType == "auto" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    elif [[ $valueType == "string" ]]; then
-        jsonValue=$(echo "\"$value\"" | yq eval -o=json)
-    elif [[ $valueType == "number" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    elif [[ $valueType == "bool" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    else
-        echo "Unsupported value type: $valueType"
-        return 1
+    case "$valueType" in
+        string) expression=".${keyPath} = strenv(HIHY_YAML_VALUE)" ;;
+        number) [[ "$value" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || return 1; expression=".${keyPath} = env(HIHY_YAML_VALUE)" ;;
+        bool) [[ "$value" == true || "$value" == false ]] || return 1; expression=".${keyPath} = env(HIHY_YAML_VALUE)" ;;
+        *) return 1 ;;
+    esac
+    [ -f "$file" ] || printf '{}\n' >"$file" || return 1
+    temp=$(mktemp "$(dirname "$file")/.yaml.XXXXXXXX") || return 1
+    if HIHY_YAML_VALUE="$value" yq eval "$expression" "$file" >"$temp"; then
+        chmod 600 "$temp" && mv -f -- "$temp" "$file" && return 0
     fi
-
-    # 使用 yq 修改 YAML 文件
-    yq eval ".${keyPath} = ${jsonValue}" -i "$file"
+    rm -f -- "$temp"
+    return 1
 }
 
 getYamlValue() {
     local file=$1    # YAML文件路径
     local keyPath=$2 # 键路径，用点号分隔
+    local value
 
     # 检查文件是否存在(错误走 stderr,避免污染调用方捕获的 stdout)
     if [[ ! -f "$file" ]]; then
@@ -202,7 +198,7 @@ getYamlValue() {
     fi
 
     # 使用 yq 读取 YAML 文件中的值
-    value=$(yq eval ".${keyPath}" "$file")
+    value=$(yq -r eval ".${keyPath}" "$file")
 
     # 检查 yq 命令是否成功执行
     if [[ $? -ne 0 ]]; then
@@ -210,6 +206,6 @@ getYamlValue() {
         return 1
     fi
 
-    echo "$value"
+    printf '%s\n' "$value"
 }
 

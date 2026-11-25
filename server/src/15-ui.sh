@@ -45,55 +45,6 @@ echoColor() {
     esac
 }
 
-# 检测系统架构的函数
-getPortBindMsg() {
-    # $1 type UDP or TCP
-    # $2 port
-    local msg
-    if [ "$1" == "UDP" ]; then
-        msg=$(lsof -i "${1}:${2}")
-    else
-        msg=$(lsof -i "${1}:${2}" | grep LISTEN)
-    fi
-
-    if [ -z "$msg" ]; then
-        return
-    fi
-
-    local command pid name
-    command=$(echo "$msg" | awk '{print $1}')
-    pid=$(echo "$msg" | awk '{print $2}')
-    name=$(echo "$msg" | awk '{print $9}')
-    echoColor purple "$(i18n port_bind_in_use ${1} ${2} ${command} ${name} ${pid})"
-    echoColor green "$(i18n port_bind_auto_close_prompt)"
-    read -r bindP
-
-    if [ -z "$bindP" ] || [[ ! "$bindP" =~ ^[yY]$ ]]; then
-        echoColor red "$(i18n port_bind_exit)"
-        if [ "$1" == "TCP" ] && [ "$2" == "80" ]; then
-            echoColor red "$(i18n port_bind_alternative_cert_for_80 ${1} ${2})"
-        fi
-        exit
-    fi
-
-    pkill -f "^/etc/hihy/bin/appS"
-    echoColor purple "$(i18n port_bind_unbinding)"
-    sleep 3
-
-    if [ "$1" == "TCP" ]; then
-        msg=$(lsof -i "${1}:${2}" | grep LISTEN)
-    else
-        msg=$(lsof -i "${1}:${2}")
-    fi
-
-    if [ -n "$msg" ]; then
-        echoColor red "$(i18n port_bind_close_failed)"
-        exit
-    else
-        echoColor green "$(i18n port_bind_unbound)"
-    fi
-}
-
 generate_qr() {
     local url=$1
 
@@ -105,7 +56,7 @@ generate_qr() {
     # -l L: 使用最低级别的纠错
     # -m margin: 设置边距
     # -s 1: 使用最小合法尺寸
-    qrencode -t ANSIUTF8 -o - -l "$level" -m "$margin" -s 1 "${url}"
+    printf '%s' "$url" | qrencode -t ANSIUTF8 -o - -l "$level" -m "$margin" -s 1
 
     if [ $? -eq 0 ]; then
         echoColor green "\n$(i18n qr_code_generated_success)"
@@ -151,7 +102,7 @@ menuItem() {
 }
 
 show_menu() {
-    clear
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     local state coreV=""
     state=$(getServiceRunState)
     if [ -x "/etc/hihy/bin/appS" ]; then
@@ -176,7 +127,6 @@ show_menu() {
     else
         echo -e "  ${status_segment}"
     fi
-    hihy_update_notifycation
 
     menuSection "$(i18n menu_section_deploy)"
     menuItem 1 "$(i18n menu_item_install)"
@@ -198,7 +148,6 @@ show_menu() {
 
     menuSection "$(i18n menu_section_maintain)"
     menuItem 7 "$(i18n menu_item_update_core)"
-    menuItem 11 "$(i18n menu_item_update_hihy)"
     menuItem 13 "$(i18n menu_item_traffic)"
     menuItem 14 "$(i18n menu_item_logs)"
 
@@ -206,7 +155,6 @@ show_menu() {
     menuItem 0 "$(i18n menu_item_exit)"
     echo -e " \033[90m$(i18n menu_hint_hihy_cmd "hihy")\033[0m"
     echo ""
-    startBackgroundVersionCheck
 }
 
 wait_for_continue() {

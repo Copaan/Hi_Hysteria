@@ -123,11 +123,11 @@
   "client_mihomo_gecko_skip": "Примечание: mihomo не поддерживает gecko-обфускацию; используйте родную конфигурацию или sing-box. Конфигурация mihomo пропущена.",
   "client_mihomo_mimic_skip": "Примечание: mihomo не поддерживает mimic; используйте нативный клиент Hysteria на Linux. Конфигурация mihomo пропущена.",
   "client_only_block_http3_tip": "Совет: для лучшего опыта рекомендуется включить блокировку QUIC/HTTP3/UDP 443 на клиенте.",
-  "client_singbox_bbr_profile_note": "Примечание: sing-box поддерживает bbr_profile только с 1.14 (пока бета), поэтому поле не выводится; профиль BBR «%s» действует только в нативном клиенте.",
+  "client_singbox_bbr_profile_note": "Профиль BBR «%s» требует sing-box 1.14 или новее.",
   "client_singbox_file_hint": "📦 [sing-box / SFA / SFI / SFM / SFT] Файл конфигурации sing-box: %s",
   "client_singbox_mimic_skip": "Примечание: sing-box не поддерживает mimic; используйте нативный клиент Hysteria на Linux. Конфигурация sing-box пропущена.",
-  "client_singbox_realm_beta_warning": "Внимание: поле realm в sing-box требует версии 1.14+, у которой ещё нет стабильного релиза. Стабильный sing-box откажется загружать этот конфиг; для режима Realm используйте нативный клиент Hysteria2 или бета-версию 1.14.",
-  "client_singbox_version_hint": "Примечание: требуется sing-box 1.12+ (realm требует 1.14+, пока только бета).",
+  "client_singbox_realm_beta_warning": "Realm требует sing-box 1.14 или новее. Проверенная базовая версия: 1.14.4.",
+  "client_singbox_version_hint": "Базовая версия: sing-box 1.14.4; Realm, Gecko и профили BBR требуют 1.14+.",
   "cloudflare_token_prompt": "Введите cloudflare_api_token:",
   "cmd_title_acl": "12) Управление ACL",
   "cmd_title_autoinstall": "Установка hysteria2 в один клик (без вопросов)...",
@@ -280,7 +280,7 @@
   "masquerade_disabled_selected": "Маскировка отключена",
   "masquerade_file_hint": "Предварительный просмотр по умолчанию: https://hfiprogramming.github.io/mikutap/",
   "masquerade_file_label": "Директория файлов сайта masquerade: ",
-  "masquerade_file_prompt": "Введите директорию файлов сайта masquerade (по умолчанию: /etc/hihy/file; mikutap будет автоматически загружен):",
+  "masquerade_file_prompt": "Укажите локальный каталог сайта (по умолчанию /etc/hihy/file: загрузка закреплённой версии mikutap с проверкой SHA256):",
   "masquerade_prompt": "(10/13) Сайт-маскировка: выдаёт порт за обычный HTTPS-сайт. Выберите режим:",
   "masquerade_proxy_hint": "Сделайте reverse proxy этого сайта, но не заменяйте доменные имена внутри страницы.",
   "masquerade_proxy_label": "Адрес маскировочного прокси masquerade: ",
@@ -540,7 +540,7 @@
   "mimic_installed": "mimic %s установлен, модуль ядра загружен (modprobe mimic), включён при загрузке",
   "mimic_download_fail": "Не удалось скачать или проверить mimic",
   "mimic_extract_fail": "Не удалось распаковать пакет mimic",
-  "mimic_unsupported_arch": "mimic не поддерживает архитектуру %s (только amd64/arm64); mimic пропущен",
+  "mimic_unsupported_arch": "Mimic не поддерживает архитектуру %s (только amd64/arm64); настройка отменена.",
   "mimic_module_manual_hint": "Не удалось автоматически собрать модуль ядра mimic (нет dkms/заголовков ядра?). Установите модуль вручную по Getting Started и повторите: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md",
-  "mimic_install_fallback": "Автоустановка mimic не удалась; mimic отключён (сервис работает). После исправления включите заново: hihy 9"
+  "mimic_install_fallback": "Не удалось установить Mimic; настройка отменена, существующий сервис сохранён."
 }

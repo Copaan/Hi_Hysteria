@@ -123,11 +123,11 @@
   "client_mihomo_gecko_skip": "提示: mihomo 不支持 gecko 混淆，请使用原生配置或 sing-box，已跳过 mihomo 配置。",
   "client_mihomo_mimic_skip": "提示: mihomo 不支持 mimic,请使用 Linux 上的 Hysteria 原生客户端。已跳过 mihomo 配置。",
   "client_only_block_http3_tip": "Tip: 建议在客户端开启屏蔽QUIC/HTTP3/UDP 443此选项以获得更好的访问体验。",
-  "client_singbox_bbr_profile_note": "提示: sing-box 自 1.14(仍为 beta)才支持 bbr_profile,故未输出;BBR profile「%s」仅对原生客户端生效",
+  "client_singbox_bbr_profile_note": "BBR profile「%s」需要 sing-box 1.14 或更新版本。",
   "client_singbox_file_hint": "📦 [sing-box / SFA / SFI / SFM / SFT] sing-box 配置文件: %s",
   "client_singbox_mimic_skip": "提示: sing-box 不支持 mimic,请使用 Linux 上的 Hysteria 原生客户端。已跳过 sing-box 配置。",
-  "client_singbox_realm_beta_warning": "警告: sing-box 的 realm 字段需要 1.14+,而 1.14 目前尚无正式版。稳定版 sing-box 会拒绝加载该配置;Realm 模式请使用 Hysteria2 原生客户端,或改用 1.14 beta。",
-  "client_singbox_version_hint": "提示: 需 sing-box 1.12+ (realm 需 1.14+,目前仅有 beta)。",
+  "client_singbox_realm_beta_warning": "Realm 需要 sing-box 1.14 或更新版本；本轮兼容验证基线为 1.14.4。",
+  "client_singbox_version_hint": "兼容验证基线：sing-box 1.14.4；Realm、Gecko 和 BBR profile 需要 1.14+。",
   "cloudflare_token_prompt": "请输入cloudflare_api_token:",
   "cmd_title_acl": "12) ACL 管理",
   "cmd_title_autoinstall": "一键安装 hysteria2（零交互）...",
@@ -280,7 +280,7 @@
   "masquerade_disabled_selected": "已选择：不启用伪装",
   "masquerade_file_hint": "默认预览: https://hfiprogramming.github.io/mikutap/",
   "masquerade_file_label": "伪装网站文件目录:",
-  "masquerade_file_prompt": "请输入伪装网站文件目录(默认:/etc/hihy/file,将自动下载mikutap部署):",
+  "masquerade_file_prompt": "请输入本地网站目录（默认 /etc/hihy/file：下载固定提交并校验摘要的 mikutap）：",
   "masquerade_prompt": "(10/13)伪装网站：将端口伪装成正常的 HTTPS 站点。请选择模式:",
   "masquerade_proxy_hint": "反代该网址但不会替换网页内域名",
   "masquerade_proxy_label": "伪装代理地址:",
@@ -540,7 +540,7 @@
   "mimic_installed": "mimic %s 已安装,内核模块已加载(modprobe mimic),并已配置开机自启",
   "mimic_download_fail": "mimic 下载或校验失败",
   "mimic_extract_fail": "mimic 安装包解包失败",
-  "mimic_unsupported_arch": "mimic 官方暂不支持 %s 架构(仅 amd64/arm64),已跳过启用 mimic",
+  "mimic_unsupported_arch": "Mimic 不支持 %s 架构（仅 amd64/arm64）；已中止本次配置。",
   "mimic_module_manual_hint": "mimic 内核模块未能自动编译(缺少 dkms/内核头文件)。请按 Getting Started 手动安装模块后重试: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md",
-  "mimic_install_fallback": "mimic 自动安装失败,已回退为不启用(服务正常);修复后可用 hihy 9 重新配置开启"
+  "mimic_install_fallback": "Mimic 安装失败；已中止本次配置并保留现有服务。"
 }

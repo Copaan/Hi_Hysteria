@@ -16,109 +16,126 @@ getHysteriaCoreArch() {
     esac
 }
 
-downloadHysteriaCore() {
-    local version
-    version=$(getLatestHysteriaVersion)
 
-    if [ -z "$version" ]; then
-        echoColor red "$(i18n network_error_get_latest_version)"
-        return 1
-    fi
-
-    echo -e "$(i18n latest_hysteria_version) $(echoColor red "${version}")\n$(i18n core_downloading)"
-
-    local arch
-    arch=$(getHysteriaCoreArch)
-    if [ -z "$arch" ]; then
-        echoColor yellowBlack "$(i18n unsupported_arch "$(uname -m)")"
-        return 1
-    fi
-    local download_url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-${arch}"
-
-    # 下载到临时文件,校验后原子替换,避免失败时破坏现有可用内核
-    mkdir -p /etc/hihy/bin
-    local temp_bin="/etc/hihy/bin/.appS.tmp.$$"
-
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -O "$temp_bin" --no-check-certificate "$download_url" &
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$temp_bin" "$download_url" &
-    else
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-
-    local dl_pid=$!
-    local spin='-\|/'
-    local i=0
-    while kill -0 $dl_pid 2>/dev/null; do
-        printf "\r\033[K$(i18n core_downloading) %s" "${spin:i++%4:1}"
-        sleep 0.3
-    done
-    wait $dl_pid
-    local dl_rc=$?
-    printf "\r\033[K"
-    if [ $dl_rc -ne 0 ] || [ ! -s "$temp_bin" ]; then
-        rm -f "$temp_bin"
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-
-    # ELF 魔数校验:防止把镜像/网关返回的错误页当成二进制装进去
-    if [ "$(head -c 4 "$temp_bin" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
-        rm -f "$temp_bin"
-        echoColor red "$(i18n core_download_invalid)"
-        return 1
-    fi
-
-    chmod 755 "$temp_bin"
-    mv "$temp_bin" /etc/hihy/bin/appS
-    echoColor purple "\n$(i18n download_completed)"
-}
-
-updateHysteriaCore() {
-    if [ ! -f "/etc/hihy/bin/appS" ]; then
-        echoColor red "$(i18n hysteria_core_not_found)"
-        return 1
-    fi
-
-    local localV
-    localV=$(getLocalHysteriaVersion || true)
-    local remoteV
-    remoteV=$(getLatestHysteriaVersion || true)
-    echo -e "$(i18n local_core_version) $(echoColor red "${localV}")"
-    echo -e "$(i18n remote_core_version) $(echoColor red "${remoteV}")"
-
-    # 拿不到远端版本时不要盲目重装(旧逻辑会当作"有更新"直接下载,网络故障时半途报废)
-    if [ -z "${remoteV}" ]; then
-        echoColor yellow "$(i18n update_skip_no_remote)"
-        return 1
-    fi
-
-    if [ "${localV}" = "${remoteV}" ]; then
-        echoColor green "$(i18n already_latest_version)"
-        return 0
-    fi
-
-    local was_running="false"
-    if [ "$(getServiceRunState)" = "running" ]; then
-        was_running="true"
-        stop
-        killHysteriaProcess TERM
-    fi
-
-    if ! downloadHysteriaCore; then
-        # 下载失败时旧内核仍完好,恢复服务
-        if [ "${was_running}" == "true" ]; then
-            start
+# Install the pinned private YAML tool without changing the system yq.
+installPrivateYq() {
+    local arch expected temp actual
+    arch=$(getArchitecture)
+    case "$arch" in
+        amd64) expected=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973 ;;
+        arm64) expected=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67 ;;
+        *) securityError "No pinned yq artifact for $arch."; return 1 ;;
+    esac
+    mkdir -p "$(dirname "$HIHY_YQ_BIN")" || return 1
+    [ ! -L "$HIHY_YQ_BIN" ] || return 1
+    actual=""
+    [ ! -f "$HIHY_YQ_BIN" ] || actual=$(sha256sum "$HIHY_YQ_BIN" | awk '{print $1}')
+    if [ "$actual" != "$expected" ]; then
+        temp=$(mktemp "$(dirname "$HIHY_YQ_BIN")/.yq.XXXXXXXX") || return 1
+        if ! downloadVerifiedFile "https://github.com/mikefarah/yq/releases/download/${HIHY_YQ_VERSION}/yq_linux_${arch}" "$temp" "$expected"; then
+            rm -f -- "$temp"; return 1
         fi
-        return 1
+        chmod 700 "$temp" && mv -f -- "$temp" "$HIHY_YQ_BIN" || return 1
     fi
-    # 清除版本检查缓存，确保下次运行重新检查（避免显示过时的"有新版本"通知）
-    rm -f "$HIHY_VERSION_STATUS_FILE"
-
-    if [ "${was_running}" == "true" ]; then
-        start
-    fi
-    echoColor green "$(i18n hysteria_core_update_done)"
+    export PATH="$(dirname "$HIHY_YQ_BIN"):$PATH"
 }
+
+validCoreVersion() { [[ "$1" =~ ^app/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# Inspect ELF class, byte order and machine before executing a downloaded binary.
+validateCoreArchitecture() {
+    local file="$1" arch="$2" expected header machine
+    case "$arch" in
+        amd64) expected=0201:3e00 ;;
+        arm64) expected=0201:b700 ;;
+        386) expected=0101:0300 ;;
+        arm) expected=0101:2800 ;;
+        s390x) expected=0202:0016 ;;
+        ppc64le) expected=0201:1500 ;;
+        loong64) expected=0201:0201 ;;
+        mipsle) expected=0101:0800 ;;
+        *) return 1 ;;
+    esac
+    [ "$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ] || return 1
+    header=$(od -An -tx1 -j4 -N2 "$file" | tr -d ' \n')
+    machine=$(od -An -tx1 -j18 -N2 "$file" | tr -d ' \n')
+    [ "$header:$machine" = "$expected" ]
+}
+
+# Fetch a version once, verify its manifest and artifact, then expose the candidate.
+fetchHysteriaCandidate() (
+    local version="$1" dest="$2" arch base temp expected
+    validCoreVersion "$version" || { securityError 'Invalid stable Hysteria version.'; return 1; }
+    arch=$(getHysteriaCoreArch)
+    [ -n "$arch" ] || return 1
+    base="https://github.com/HyNetworks/hysteria/releases/download/$version"
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    if [ "$version" = app/v2.14.0 ]; then
+        downloadVerifiedFile "$base/hashes.txt" "$temp/hashes" ab844879a3323b948c2fcd338c4d06a888255e44963b985ac98cd4b32e8a5627 || return 1
+    else
+        downloadToFile "$base/hashes.txt" "$temp/hashes" || return 1
+    fi
+    expected=$(awk -v file="hysteria-linux-$arch" '$2 == file || $2 == "build/" file {print $1}' "$temp/hashes")
+    isValidSHA256 "$expected" || { securityError "Missing or duplicate checksum for $arch."; return 1; }
+    downloadVerifiedFile "$base/hysteria-linux-$arch" "$temp/core" "$expected" || return 1
+    validateCoreArchitecture "$temp/core" "$arch" || { securityError 'Downloaded core has the wrong ELF architecture.'; return 1; }
+    chmod 700 "$temp/core" || return 1
+    [ "$(getLocalHysteriaVersion "$temp/core")" = "$version" ] || { securityError 'Downloaded core version/architecture check failed.'; return 1; }
+    [ ! -L "$dest" ] || return 1
+    cp -- "$temp/core" "$dest" && chmod 700 "$dest"
+)
+
+downloadHysteriaCore() {
+    local version="${1:-$HIHY_CORE_VERSION}" temp
+    mkdir -p "$HIHY_ROOT_DIR/bin" || return 1
+    temp=$(mktemp "$HIHY_ROOT_DIR/bin/.appS.XXXXXXXX") || return 1
+    if fetchHysteriaCandidate "$version" "$temp"; then
+        mv -f -- "$temp" "$HIHY_ROOT_DIR/bin/appS" && return 0
+    fi
+    rm -f -- "$temp"
+    return 1
+}
+
+# Switch the verified core with rollback on any failed restart or interruption.
+updateHysteriaCore() (
+    local version="${1:-}" core="$HIHY_ROOT_DIR/bin/appS" temp was_running=false stopped=false switched=false success=false
+    [ -f "$core" ] || return 1
+    [ -n "$version" ] || version=$(getLatestHysteriaVersion) || return 1
+    validCoreVersion "$version" || return 1
+    [ "$(getLocalHysteriaVersion)" != "$version" ] || { printf '%s\n' 'Core already at requested version.'; return 0; }
+    temp=$(mktemp -d "$HIHY_ROOT_DIR/bin/.upgrade.XXXXXXXX") || return 1
+    rollbackCore() {
+        local rc=$?
+        stopValidationProcess
+        if [ "$success" != true ]; then
+            if [ "$switched" = true ]; then
+                stop >/dev/null 2>&1 || true
+                mv -f -- "$temp/previous" "$core" || rc=1
+            fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+        fi
+        rm -rf -- "$temp"
+        return "$rc"
+    }
+    trap rollbackCore EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    fetchHysteriaCandidate "$version" "$temp/candidate" || return 1
+    cp -p -- "$core" "$temp/previous" || return 1
+    if [ "$(getServiceRunState)" = running ]; then
+        was_running=true
+        stop || return 1
+        stopped=true
+    fi
+    startInstallValidationProcess "$HIHY_ROOT_DIR/conf/config.yaml" "$temp/validation.log" "$temp/candidate" || return 1
+    waitForValidationOutcome "$temp/validation.log" 60 || { securityError 'Candidate core failed configuration validation.'; return 1; }
+    stopValidationProcess
+    switched=true
+    mv -f -- "$temp/candidate" "$core" || return 1
+    if [ "$was_running" = true ]; then
+        start && [ "$(getServiceRunState)" = running ] || return 1
+    fi
+    success=true
+    printf 'Hysteria core updated to %s\n' "$version"
+)

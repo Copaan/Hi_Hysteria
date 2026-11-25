@@ -6,47 +6,23 @@ killHysteriaProcess() {
     if [ -f "$pid_file" ]; then
         local pid
         pid=$(cat "$pid_file" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        if isHysteriaPid "$pid" && kill -0 "$pid" 2>/dev/null; then
             kill "-${signal}" "$pid" 2>/dev/null || true
             sleep 1
         fi
         rm -f "$pid_file"
     fi
 
-    # 锚定 ^:只匹配以核心路径开头的命令行(nohup/setsid/chrt 均为 exec 链,最终 argv[0] 就是该路径),
-    # 否则会误杀命令行参数里恰好带此路径的无辜进程(编辑器、grep、CI 驱动脚本等)
-    if pgrep -f "^/etc/hihy/bin/appS" >/dev/null 2>&1; then
-        pkill "-${signal}" -f "^/etc/hihy/bin/appS" 2>/dev/null || true
-        sleep 2
-        if pgrep -f "^/etc/hihy/bin/appS" >/dev/null 2>&1; then
-            pkill -9 -f "^/etc/hihy/bin/appS" 2>/dev/null || true
-            sleep 1
-        fi
-    fi
+    local candidate
+    for candidate in $(pgrep -f "^$HIHY_ROOT_DIR/bin/appS" 2>/dev/null); do
+        isHysteriaPid "$candidate" || continue
+        kill "-$signal" "$candidate" 2>/dev/null || true
+    done
+
 }
 
-cleanupHysteria2Iptables() {
-    for table in nat mangle; do
-        if command -v iptables-save >/dev/null 2>&1; then
-            iptables -t "$table" -S 2>/dev/null | grep -oP 'HYSTERIA-\S+' | sort -u | while read -r chain; do
-                iptables -t "$table" -S 2>/dev/null | grep -E " -j $chain$" | sed 's/-A/-D/' | while read -r rule; do
-                    iptables -t "$table" $rule 2>/dev/null || true
-                done
-                iptables -t "$table" -F "$chain" 2>/dev/null || true
-                iptables -t "$table" -X "$chain" 2>/dev/null || true
-            done
-        fi
-        if command -v ip6tables-save >/dev/null 2>&1; then
-            ip6tables -t "$table" -S 2>/dev/null | grep -oP 'HYSTERIA-\S+' | sort -u | while read -r chain; do
-                ip6tables -t "$table" -S 2>/dev/null | grep -E " -j $chain$" | sed 's/-A/-D/' | while read -r rule; do
-                    ip6tables -t "$table" $rule 2>/dev/null || true
-                done
-                ip6tables -t "$table" -F "$chain" 2>/dev/null || true
-                ip6tables -t "$table" -X "$chain" 2>/dev/null || true
-            done
-        fi
-    done
-}
+# Port-hopping chains belong to the core and are cleaned up by its shutdown.
+cleanupHysteria2Iptables() { return 0; }
 
 checkRoot() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -97,59 +73,23 @@ uninstall() {
 
     killHysteriaProcess TERM
 
-    # 删除 iptables 规则（脚本和 Hysteria2 自身添加的）
-    if command -v iptables-save >/dev/null 2>&1 && command -v iptables-restore >/dev/null 2>&1; then
-        iptables-save 2>/dev/null | grep -v "hihysteria" | iptables-restore >/dev/null 2>&1 || true
-    fi
-    if command -v ip6tables-save >/dev/null 2>&1 && command -v ip6tables-restore >/dev/null 2>&1; then
-        ip6tables-save 2>/dev/null | grep -v "hihysteria" | ip6tables-restore >/dev/null 2>&1 || true
-    fi
-    cleanupHysteria2Iptables
-
-    # 保存 iptables 规则
-    if [ -d "/etc/iptables" ]; then
-        if command -v iptables-save >/dev/null 2>&1; then
-            iptables-save >/etc/iptables/rules.v4
-        fi
-        if command -v ip6tables-save >/dev/null 2>&1; then
-            ip6tables-save >/etc/iptables/rules.v6
-        fi
-    fi
-
     # 删除定时任务
-    crontab -l 2>/dev/null | grep -v "hihy cronTask" | crontab -
+    removeHihyCron || return 1
 
-    delHihyFirewallPort udp
-    delHihyFirewallPort tcp
+    delHihyFirewallPort udp || return 1
+    delHihyFirewallPort tcp || return 1
 
     # 删除相关目录和文件
+    if [ -f "$HIHY_ROOT_DIR/conf/sysctl-owned" ]; then rm -f /etc/sysctl.d/99-hihy.conf; fi
     rm -rf /etc/hihy
     rm -f /var/run/hihy.pid
-    rm -f /usr/bin/yq
-    rm -f /etc/sysctl.d/99-hihy.conf
     rm -f "$HIHY_BIN_LINK"
 
     if [ -f "/etc/rc.local" ]; then
-        sed -i '/\/etc\/rc.d\/hihy start/d' /etc/rc.local
-        if grep -q "/etc/rc.d/allow-port" /etc/rc.local; then
-            sed -i '/\/etc\/rc.d\/allow-port start/d' /etc/rc.local
-        fi
+        sed -i '\|^/etc/rc[.]d/hihy start$|d' /etc/rc.local
     fi
 
-    # 检测并提示卸载WARP/WireProxy
-    if command -v warp >/dev/null 2>&1 && [ -f "/etc/wireguard/warp.conf" ]; then
-        echoColor purple "\n$(i18n warp_detected)"
-        echoColor green "$(i18n warp_uninstall_prompt)"
-        echo -e "\033[33m\033[01m$(i18n warp_uninstall_choice)\033[0m\033[32m\n\n$(i18n prompt_enter_number):\033[0m"
-        read -r warpUninstallChoice
-        if [ -z "${warpUninstallChoice}" ] || [ "${warpUninstallChoice}" == "1" ]; then
-            echoColor purple "\n$(i18n warp_uninstalling)"
-            warp u || true
-            echoColor purple "\n$(i18n warp_uninstall_done)"
-        else
-            echoColor purple "\n$(i18n warp_keep_installation)"
-        fi
-    fi
+    # Shared third-party tools are managed by their own installers.
     clearInstallFailureMarker
 
     # 删除 Arch Linux 的 rc.local systemd 服务

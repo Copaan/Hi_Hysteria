@@ -1,9 +1,10 @@
 #!/bin/bash
-hihyV="ver1.20"
+hihyV="ver1.20-secure.1"
 # =============================================================================
 # GENERATED FILE — DO NOT EDIT.
 # Source lives in server/src/*.sh. Edit there and run: bash scripts/build.sh
 # =============================================================================
+umask 077
 
 # i18n 多语言支持
 HIHY_I18N_SCHEMA=1
@@ -13,24 +14,151 @@ HIHY_LANG="${HIHY_LANG:-}"
 
 HIHY_ROOT_DIR="${HIHY_ROOT_DIR:-/etc/hihy}"
 HIHY_BIN_LINK="${HIHY_BIN_LINK:-/usr/bin/hihy}"
-HIHY_YQ_BIN="${HIHY_YQ_BIN:-/usr/bin/yq}"
+HIHY_YQ_BIN="${HIHY_YQ_BIN:-$HIHY_ROOT_DIR/bin/yq}"
+HIHY_YQ_VERSION="v4.54.3"
+HIHY_CORE_VERSION="${HIHY_CORE_VERSION:-app/v2.14.0}"
 HIHY_PID_FILE="${HIHY_PID_FILE:-/var/run/hihy.pid}"
 HIHY_RC_LOCAL="${HIHY_RC_LOCAL:-/etc/rc.local}"
-HIHY_REMOTE_SCRIPT_URL="${HIHY_REMOTE_SCRIPT_URL:-https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/hy2.sh}"
-HIHY_REMOTE_SCRIPT_MIRROR_URL="${HIHY_REMOTE_SCRIPT_MIRROR_URL:-https://cdn.jsdelivr.net/gh/kaecho/Hi_Hysteria@main/server/hy2.sh}"
-HIHY_VERSION_STATUS_FILE="${HIHY_VERSION_STATUS_FILE:-$HIHY_ROOT_DIR/result/version-check.state}"
-HIHY_VERSION_CHECK_LOCK_FILE="${HIHY_VERSION_CHECK_LOCK_FILE:-$HIHY_ROOT_DIR/result/version-check.lock}"
-HIHY_VERSION_CHECK_TTL="${HIHY_VERSION_CHECK_TTL:-21600}"
-HIHY_REMOTE_CONNECT_TIMEOUT="${HIHY_REMOTE_CONNECT_TIMEOUT:-2}"
-HIHY_REMOTE_MAX_TIME="${HIHY_REMOTE_MAX_TIME:-5}"
+HIHY_REMOTE_CONNECT_TIMEOUT="${HIHY_REMOTE_CONNECT_TIMEOUT:-10}"
+HIHY_REMOTE_MAX_TIME="${HIHY_REMOTE_MAX_TIME:-180}"
+HIHY_DOWNLOAD_RETRIES="${HIHY_DOWNLOAD_RETRIES:-2}"
+HIHY_EXPORT_DIR="${HIHY_EXPORT_DIR:-$HIHY_ROOT_DIR/result}"
+HIHY_CLIENT_ALLOW_LAN="${HIHY_CLIENT_ALLOW_LAN:-false}"
+export HYSTERIA_DISABLE_UPDATE_CHECK=1
+if [ -x "$HIHY_YQ_BIN" ]; then
+    export PATH="$(dirname "$HIHY_YQ_BIN"):$PATH"
+fi
 HIHY_RULESET_MIRROR="${HIHY_RULESET_MIRROR:-https://cdn.jsdelivr.net/gh}"
+
+# ----- 05-security.sh -----
+
+# Emit security errors on stderr without interpreting terminal escapes.
+securityError() { printf 'hihy: %s\n' "$*" >&2; return 1; }
+
+# Validate DNS names before using them in configuration or certificate paths.
+isValidDomain() {
+    local domain="$1" label
+    [ ${#domain} -le 253 ] && [[ "$domain" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+    [[ "$domain" != .* && "$domain" != *. && "$domain" != *..* ]] || return 1
+    local IFS=.
+    for label in $domain; do
+        [ ${#label} -le 63 ] && [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+    done
+}
+
+isValidSHA256() { [[ "$1" =~ ^[[:xdigit:]]{64}$ ]]; }
+isValidFingerprint() { local fp="${1//:/}"; isValidSHA256 "$fp"; }
+
+# Percent-encode UTF-8 bytes for URI components.
+urlEncode() {
+    local LC_ALL=C input="$1" char i
+    for ((i=0; i<${#input}; i++)); do
+        char="${input:i:1}"
+        case "$char" in [a-zA-Z0-9.~_-]) printf '%s' "$char" ;; *) printf '%%%02X' "'$char" ;; esac
+    done
+}
+
+# Return a private output path independent of the display name.
+clientOutputPath() {
+    local remarks="$1" suffix="$2" name digest
+    name=$(printf '%s' "$remarks" | LC_ALL=C tr -cs 'A-Za-z0-9_-' '_' | cut -c1-48)
+    digest=$(printf '%s' "$remarks" | sha256sum | cut -c1-12)
+    mkdir -p "$HIHY_EXPORT_DIR" || return 1
+    [ ! -L "$HIHY_EXPORT_DIR" ] || return 1
+    chmod 700 "$HIHY_EXPORT_DIR" || return 1
+    printf '%s/Hy2-%s-%s-%s\n' "$HIHY_EXPORT_DIR" "${name:-node}" "$digest" "$suffix"
+}
+
+secureTempDir() { mktemp -d "${TMPDIR:-/tmp}/hihy.XXXXXXXX"; }
+
+# Tighten files owned by this installation without following symlinks.
+secureInstallPermissions() {
+    [ -d "$HIHY_ROOT_DIR" ] && [ ! -L "$HIHY_ROOT_DIR" ] || return 1
+    find "$HIHY_ROOT_DIR" -type d -exec chmod 700 {} + || return 1
+    find "$HIHY_ROOT_DIR" -type f ! -path "$HIHY_ROOT_DIR/bin/*" -exec chmod 600 {} +
+}
+
+# A third-party installer is executable only with a reviewed immutable URL/hash.
+installWarpVerified() (
+    local mode="$1" temp
+    [[ "${HIHY_WARP_URL:-}" =~ ^https://gitlab\.com/fscarmen/warp/-/raw/[0-9a-f]{40}/menu\.sh$ ]] \
+        && isValidSHA256 "${HIHY_WARP_SHA256:-}" \
+        || { securityError 'WARP automatic installation requires a reviewed commit URL and SHA256. Install WARP separately or supply both.'; return 1; }
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    downloadVerifiedFile "$HIHY_WARP_URL" "$temp/menu.sh" "$HIHY_WARP_SHA256" || return 1
+    bash -n "$temp/menu.sh" || return 1
+    (cd "$temp" && bash ./menu.sh "$mode")
+)
+
+# Insert startup commands before an existing exit without replacing user content.
+appendRcLocalCommand() {
+    local line="$1" file="$HIHY_RC_LOCAL" temp
+    [ ! -L "$file" ] || return 1
+    [ -f "$file" ] || printf '#!/bin/sh\n' >"$file" || return 1
+    grep -Fxq -- "$line" "$file" && return 0
+    temp=$(mktemp "$(dirname "$file")/.rc-local.XXXXXXXX") || return 1
+    awk -v cmd="$line" '/^[[:space:]]*exit[[:space:]]+0[[:space:]]*$/ && !done { print cmd; done=1 } {print} END {if(!done) print cmd}' "$file" >"$temp" \
+        && chmod 700 "$temp" && mv -- "$temp" "$file"
+}
+
+# Identify the executable as well as the PID before signalling a process.
+isHysteriaPid() {
+    local pid="$1" executable
+    [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] || return 1
+    executable=$(readlink "/proc/$pid/exe" 2>/dev/null) || return 1
+    [[ "$executable" = "$HIHY_ROOT_DIR/bin/appS" || "$executable" = "$HIHY_ROOT_DIR/bin/appS (deleted)" ]]
+}
+
+# Decode percent escapes without evaluating backslashes from user input.
+urlDecode() {
+    local input="$1" prefix rest hex
+    while [[ "$input" = *%* ]]; do
+        prefix="${input%%\%*}"; printf '%s' "$prefix"
+        rest="${input#*%}"; hex="${rest:0:2}"
+        [[ "$hex" =~ ^[[:xdigit:]]{2}$ ]] || return 1
+        printf '%b' "\x$hex"
+        input="${rest:2}"
+    done
+    printf '%s' "$input"
+}
+
+# Remove only the exact scheduled entry installed by hihy.
+removeHihyCron() (
+    local temp
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    if crontab -l >"$temp/before" 2>/dev/null; then
+        grep -Fxv -e "15 4 * * 1 $HIHY_BIN_LINK cronTask" -e '15 4 * * 1 hihy cronTask' "$temp/before" >"$temp/after" || [ $? -eq 1 ] || return 1
+        crontab "$temp/after"
+    fi
+)
+
+# Stage the pinned default masquerade site; extract only reviewed regular files.
+prepareMasqueradeFiles() (
+    local destination="$1" temp prefix='mikutap-fb292bc1c3b3a29d80feaac2dbe93fca981776ee/' name
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    downloadVerifiedFile 'https://codeload.github.com/HFIProgramming/mikutap/tar.gz/fb292bc1c3b3a29d80feaac2dbe93fca981776ee' "$temp/site.tar.gz" d3fab27fbc3de256d50aea4325094fefbf6bdaa4c693f4a16619dc1c74df355d || return 1
+    tar -tzf "$temp/site.tar.gz" >"$temp/names" || return 1
+    while IFS= read -r name; do
+        case "$name" in "$prefix"*) ;; *) return 1 ;; esac
+        case "/$name/" in */../*|*/./*) return 1 ;; esac
+    done <"$temp/names"
+    tar -tvzf "$temp/site.tar.gz" >"$temp/types" || return 1
+    awk 'substr($0,1,1)!="-" && substr($0,1,1)!="d" {bad=1} END {exit bad}' "$temp/types" || return 1
+    mkdir -p "$destination" && [ ! -L "$destination" ] || return 1
+    tar -xzf "$temp/site.tar.gz" -C "$destination" --strip-components=1 --no-same-owner --no-same-permissions || return 1
+    find "$destination" -type f -exec chmod 600 {} +
+    find "$destination" -type d -exec chmod 700 {} +
+)
 
 # ----- 10-i18n.sh -----
 loadPersistedLanguage() {
     if [ -f "$HIHY_I18N_CONF" ] && [ -z "$HIHY_LANG" ]; then
         HIHY_LANG=$(grep -E '^HIHY_LANG=' "$HIHY_I18N_CONF" | tail -n 1 | cut -d'=' -f2-)
     fi
-    HIHY_LANG="${HIHY_LANG:-en}"
+    case "${HIHY_LANG:-en}" in en|zh|fa|ru) HIHY_LANG="${HIHY_LANG:-en}" ;; *) HIHY_LANG=en ;; esac
 }
 
 savePersistedLanguage() {
@@ -51,19 +179,6 @@ getI18nSchemaVersion() {
     line="${line%%,*}"
     line="${line#*: }"
     printf '%s' "$line"
-}
-
-refreshI18nFile() {
-    local lang="$1"
-    local base_url="https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main"
-    mkdir -p "$HIHY_I18N_DIR"
-    local url="${base_url}/server/i18n/${lang}.json"
-    local out="${HIHY_I18N_DIR}/hy2.sh.${lang}.json"
-    if command -v wget >/dev/null 2>&1; then
-        wget -q --no-check-certificate -O "$out" "$url" 2>/dev/null
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$out" "$url" 2>/dev/null
-    fi
 }
 
 # 按 key 读取 JSON 字符串；返回空表示未找到
@@ -92,9 +207,7 @@ i18nLookup() {
         local schema
         schema=$(getI18nSchemaVersion "$lang_file")
         if [ "$schema" != "$HIHY_I18N_SCHEMA" ]; then
-            # 异步静默更新语言文件
-            (refreshI18nFile "$HIHY_LANG") >/dev/null 2>&1 &
-            # 本次直接使用英文
+            # 不匹配的语言包只回退到本地英文。
             value=$(i18nValueFromFile "$en_file" "$key")
             [ -n "$value" ] && printf '%s' "$value" && return 0
             printf '%s' "$key"
@@ -176,55 +289,6 @@ echoColor() {
     esac
 }
 
-# 检测系统架构的函数
-getPortBindMsg() {
-    # $1 type UDP or TCP
-    # $2 port
-    local msg
-    if [ "$1" == "UDP" ]; then
-        msg=$(lsof -i "${1}:${2}")
-    else
-        msg=$(lsof -i "${1}:${2}" | grep LISTEN)
-    fi
-
-    if [ -z "$msg" ]; then
-        return
-    fi
-
-    local command pid name
-    command=$(echo "$msg" | awk '{print $1}')
-    pid=$(echo "$msg" | awk '{print $2}')
-    name=$(echo "$msg" | awk '{print $9}')
-    echoColor purple "$(i18n port_bind_in_use ${1} ${2} ${command} ${name} ${pid})"
-    echoColor green "$(i18n port_bind_auto_close_prompt)"
-    read -r bindP
-
-    if [ -z "$bindP" ] || [[ ! "$bindP" =~ ^[yY]$ ]]; then
-        echoColor red "$(i18n port_bind_exit)"
-        if [ "$1" == "TCP" ] && [ "$2" == "80" ]; then
-            echoColor red "$(i18n port_bind_alternative_cert_for_80 ${1} ${2})"
-        fi
-        exit
-    fi
-
-    pkill -f "^/etc/hihy/bin/appS"
-    echoColor purple "$(i18n port_bind_unbinding)"
-    sleep 3
-
-    if [ "$1" == "TCP" ]; then
-        msg=$(lsof -i "${1}:${2}" | grep LISTEN)
-    else
-        msg=$(lsof -i "${1}:${2}")
-    fi
-
-    if [ -n "$msg" ]; then
-        echoColor red "$(i18n port_bind_close_failed)"
-        exit
-    else
-        echoColor green "$(i18n port_bind_unbound)"
-    fi
-}
-
 generate_qr() {
     local url=$1
 
@@ -236,7 +300,7 @@ generate_qr() {
     # -l L: 使用最低级别的纠错
     # -m margin: 设置边距
     # -s 1: 使用最小合法尺寸
-    qrencode -t ANSIUTF8 -o - -l "$level" -m "$margin" -s 1 "${url}"
+    printf '%s' "$url" | qrencode -t ANSIUTF8 -o - -l "$level" -m "$margin" -s 1
 
     if [ $? -eq 0 ]; then
         echoColor green "\n$(i18n qr_code_generated_success)"
@@ -282,7 +346,7 @@ menuItem() {
 }
 
 show_menu() {
-    clear
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     local state coreV=""
     state=$(getServiceRunState)
     if [ -x "/etc/hihy/bin/appS" ]; then
@@ -307,7 +371,6 @@ show_menu() {
     else
         echo -e "  ${status_segment}"
     fi
-    hihy_update_notifycation
 
     menuSection "$(i18n menu_section_deploy)"
     menuItem 1 "$(i18n menu_item_install)"
@@ -329,7 +392,6 @@ show_menu() {
 
     menuSection "$(i18n menu_section_maintain)"
     menuItem 7 "$(i18n menu_item_update_core)"
-    menuItem 11 "$(i18n menu_item_update_hihy)"
     menuItem 13 "$(i18n menu_item_traffic)"
     menuItem 14 "$(i18n menu_item_logs)"
 
@@ -337,7 +399,6 @@ show_menu() {
     menuItem 0 "$(i18n menu_item_exit)"
     echo -e " \033[90m$(i18n menu_hint_hihy_cmd "hihy")\033[0m"
     echo ""
-    startBackgroundVersionCheck
 }
 
 wait_for_continue() {
@@ -347,33 +408,6 @@ wait_for_continue() {
 
 
 # ----- 20-net-yaml.sh -----
-
-# 从远端(主源+镜像)拉取 hihy 脚本到目标路径:临时文件 -> 内容校验(hihyV= 标记) -> 原子 mv。
-# 目标可能正是正在执行的脚本,rename 只换 inode,运行中的进程不受影响。
-installHihyScriptFromRemote() {
-    local dest="$1"
-    local dest_dir temp_path
-
-    dest_dir="$(dirname "$dest")"
-    mkdir -p "$dest_dir" || return 1
-    temp_path="$(mktemp "$dest_dir/.hihy.tmp.XXXXXX")" || return 1
-
-    if ! downloadToFile "$HIHY_REMOTE_SCRIPT_URL" "$temp_path" \
-        && ! downloadToFile "$HIHY_REMOTE_SCRIPT_MIRROR_URL" "$temp_path"; then
-        rm -f "$temp_path"
-        return 1
-    fi
-    # 内容合法性校验:必须是带版本标记的 hihy 脚本,而非镜像返回的错误页
-    if ! grep -q '^hihyV=' "$temp_path"; then
-        rm -f "$temp_path"
-        return 1
-    fi
-    chmod +x "$temp_path"
-    mv "$temp_path" "$dest" || {
-        rm -f "$temp_path"
-        return 1
-    }
-}
 
 installHihyLauncher() {
     local source_path="${1:-${BASH_SOURCE[0]}}"
@@ -397,7 +431,8 @@ installHihyLauncher() {
             return 1
         }
     elif [ ! -f "$bin_link" ]; then
-        installHihyScriptFromRemote "$bin_link" || return 1
+        securityError 'Local hihy script is missing; reinstall the complete reviewed package.'
+        return 1
     fi
 
     if [ -f "$bin_link" ]; then
@@ -408,25 +443,48 @@ installHihyLauncher() {
     return 1
 }
 
-downloadToFile() {
+downloadToFile() (
     local url="$1"
     local output_path="$2"
+    local attempt temp
+    [[ "$url" == https://* ]] || { securityError 'Only HTTPS downloads are allowed.'; return 1; }
+    [ ! -L "$output_path" ] || return 1
+    temp=$(mktemp "$(dirname "$output_path")/.download.XXXXXXXX") || return 1
+    trap 'rm -f -- "$temp"' EXIT
+    for ((attempt=0; attempt<=HIHY_DOWNLOAD_RETRIES; attempt++)); do
+        if curl --proto '=https' --proto-redir '=https' -fSL --silent --show-error \
+            --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" \
+            -o "$temp" "$url" && [ -s "$temp" ]; then
+            chmod 600 "$temp" && mv -f -- "$temp" "$output_path" && return 0
+        fi
+    done
+    rm -f -- "$temp"
+    return 1
+)
 
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -O "$output_path" "$url"
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$output_path" "$url"
-    else
-        return 1
+# Verify a downloaded artifact before making it available to its caller.
+downloadVerifiedFile() (
+    local url="$1" dest="$2" expected="${3,,}" temp actual
+    isValidSHA256 "$expected" && [ ! -L "$dest" ] || return 1
+    temp=$(mktemp "$(dirname "$dest")/.verified.XXXXXXXX") || return 1
+    trap 'rm -f -- "$temp"' EXIT
+    if downloadToFile "$url" "$temp"; then
+        actual=$(sha256sum "$temp" | awk '{print $1}')
+        if [ "$actual" = "$expected" ]; then
+            mv -f -- "$temp" "$dest" && return 0
+        fi
+        securityError 'SHA256 verification failed.'
     fi
-}
+    rm -f -- "$temp"
+    return 1
+)
 
 fetchRemoteBodyFromSources() {
     local url
     local response
 
     for url in "$@"; do
-        if response=$(curl -fsSL --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
+        if response=$(curl --proto '=https' --proto-redir '=https' -fsSL --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
             printf '%s' "$response"
             return 0
         fi
@@ -441,7 +499,7 @@ fetchRemoteHeadersFromSources() {
 
     for url in "$@"; do
         # -L: GitHub /releases/latest 可能先 301 到新仓库,再 302 到 tag/;不跟随则 Location 里没有 tag/
-        if response=$(curl -fsSI -L --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
+        if response=$(curl --proto '=https' --proto-redir '=https' -fsSI -L --connect-timeout "$HIHY_REMOTE_CONNECT_TIMEOUT" --max-time "$HIHY_REMOTE_MAX_TIME" "$url" 2>/dev/null); then
             printf '%s' "$response"
             return 0
         fi
@@ -510,38 +568,37 @@ getListenRangePart() {
 }
 
 addOrUpdateYaml() {
-    local file=$1
-    local keyPath=$2
-    local value=$3
-    local valueType=${4:-"auto"} # auto, string, number, bool
-
-    # 检查文件是否存在，如果不存在则创建一个空文件
-    if [[ ! -f "$file" ]]; then
-        touch "$file"
+    local file="$1" keyPath="$2" value="$3" valueType="${4:-auto}" temp expression
+    [[ "$keyPath" =~ ^[A-Za-z_][A-Za-z0-9_.-]*(\[[0-9]+\])?([.][A-Za-z0-9_-]+(\[[0-9]+\])?)*$ ]] || return 1
+    [ ! -L "$file" ] || return 1
+    if [ "$valueType" = auto ]; then
+        case "$keyPath" in
+            *password|*Password|auth|*token*|*secret*|remarks|*name|*Name|domain|*Address|*URI|*sni|*url|*addr|*username|*content|*custom-stuff|*headers.*) valueType=string ;;
+            *)
+                if [[ "$value" == true || "$value" == false ]]; then valueType=bool
+                elif [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then valueType=number
+                else valueType=string; fi ;;
+        esac
     fi
-
-    # 将值转换为 JSON 格式以避免解析错误
-    local jsonValue
-    if [[ $valueType == "auto" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    elif [[ $valueType == "string" ]]; then
-        jsonValue=$(echo "\"$value\"" | yq eval -o=json)
-    elif [[ $valueType == "number" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    elif [[ $valueType == "bool" ]]; then
-        jsonValue=$(echo "$value" | yq eval -o=json)
-    else
-        echo "Unsupported value type: $valueType"
-        return 1
+    case "$valueType" in
+        string) expression=".${keyPath} = strenv(HIHY_YAML_VALUE)" ;;
+        number) [[ "$value" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || return 1; expression=".${keyPath} = env(HIHY_YAML_VALUE)" ;;
+        bool) [[ "$value" == true || "$value" == false ]] || return 1; expression=".${keyPath} = env(HIHY_YAML_VALUE)" ;;
+        *) return 1 ;;
+    esac
+    [ -f "$file" ] || printf '{}\n' >"$file" || return 1
+    temp=$(mktemp "$(dirname "$file")/.yaml.XXXXXXXX") || return 1
+    if HIHY_YAML_VALUE="$value" yq eval "$expression" "$file" >"$temp"; then
+        chmod 600 "$temp" && mv -f -- "$temp" "$file" && return 0
     fi
-
-    # 使用 yq 修改 YAML 文件
-    yq eval ".${keyPath} = ${jsonValue}" -i "$file"
+    rm -f -- "$temp"
+    return 1
 }
 
 getYamlValue() {
     local file=$1    # YAML文件路径
     local keyPath=$2 # 键路径，用点号分隔
+    local value
 
     # 检查文件是否存在(错误走 stderr,避免污染调用方捕获的 stdout)
     if [[ ! -f "$file" ]]; then
@@ -550,7 +607,7 @@ getYamlValue() {
     fi
 
     # 使用 yq 读取 YAML 文件中的值
-    value=$(yq eval ".${keyPath}" "$file")
+    value=$(yq -r eval ".${keyPath}" "$file")
 
     # 检查 yq 命令是否成功执行
     if [[ $? -ne 0 ]]; then
@@ -558,7 +615,7 @@ getYamlValue() {
         return 1
     fi
 
-    echo "$value"
+    printf '%s\n' "$value"
 }
 
 
@@ -639,14 +696,13 @@ echUrlEncodeB64() {
 # 策略:
 #   1. Debian/Ubuntu(有 apt-get):apt 整装,自动拉 dkms/linux-headers 依赖并触发 DKMS 编译
 #   2. 其他发行版:解包 .deb 提取静态二进制;有 dkms 命令则手动 add/build/install 编译模块
-#   3. 模块最终必须 modprobe 成功;任一步失败 -> 返回非零,调用方回退关闭 mimic
+#   3. 模块最终必须 modprobe 成功;任一步失败 -> 返回非零,终止本次配置
 # 装好后 hysteria 会自动启动并管理 mimic,无需 systemd 服务或手动配置文件。
 HIHY_MIMIC_BIN_DIR="${HIHY_MIMIC_BIN_DIR:-/usr/sbin}"
 HIHY_DKMS_SRC_DIR="${HIHY_DKMS_SRC_DIR:-/usr/src}"
 MIMIC_RELEASE_URL="${MIMIC_RELEASE_URL:-https://github.com/hack3ric/mimic/releases/latest}"
 # 三套 deb 的二进制同源(纯 Go),bookworm 兼容面最广;dkms 包是源码,与发行版无关
 MIMIC_DEB_SUITE="${MIMIC_DEB_SUITE:-bookworm}"
-MIMIC_VERSION_FALLBACK="${MIMIC_VERSION_FALLBACK:-v0.7.1}"
 
 getLatestMimicVersion() {
     local headers
@@ -669,7 +725,7 @@ downloadMimicDeb() {
     local expect actual
     expect=$(awk '{print $1}' "${out}.sha256" | head -n 1)
     actual=$(sha256sum "$out" | awk '{print $1}')
-    if [ -z "$expect" ] || [ "$expect" != "$actual" ]; then
+    if ! isValidSHA256 "$expect" || [ "${expect,,}" != "$actual" ]; then
         echoColor red "$(i18n mimic_download_fail)"
         rm -f "$out" "${out}.sha256"
         return 1
@@ -750,7 +806,7 @@ enableMimicBootModule() {
     fi
 }
 
-# 自动下载安装 mimic(程序 + 内核模块);失败返回非零,由调用方回退关闭 mimic
+# 自动下载安装 mimic(程序 + 内核模块);失败返回非零,终止本次配置
 installMimic() {
     local modules_dir="${HIHY_MODULES_LOAD_DIR:-/etc/modules-load.d}"
     # 已装且可用:直接复用
@@ -769,7 +825,8 @@ installMimic() {
     esac
     local tag ver base tmpdir
     tag=$(getLatestMimicVersion || true)
-    [ -z "$tag" ] && tag="$MIMIC_VERSION_FALLBACK"
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    case "$MIMIC_DEB_SUITE" in bookworm|noble|trixie) ;; *) return 1 ;; esac
     ver="${tag#v}"
     base="https://github.com/hack3ric/mimic/releases/download/${tag}"
     tmpdir=$(mktemp -d) || return 1
@@ -830,33 +887,8 @@ detectVirtualization() {
     echo "$virt_type"
 }
 
-# 获取启动命令前缀（是否使用 chrt）
-getStartCommand() {
-    local virt_type=$(detectVirtualization)
-    local command_prefix=""
-
-    case "$virt_type" in
-        "openvz" | "lxc" | "docker")
-            # OpenVZ、LXC 和 Docker 容器中不使用 chrt
-            command_prefix=""
-            ;;
-        *)
-            # 其他环境检查是否支持 chrt
-            if command -v chrt >/dev/null 2>&1; then
-                # 测试 chrt 是否可用
-                if chrt -r 1 echo "test" >/dev/null 2>&1; then
-                    command_prefix="chrt -r 99"
-                else
-                    command_prefix=""
-                fi
-            else
-                command_prefix=""
-            fi
-            ;;
-    esac
-
-    echo "$command_prefix"
-}
+# 获取普通调度策略下的启动命令前缀
+getStartCommand() { printf '%s' ''; }
 
 cronTask() {
     if [ -f "/etc/hihy/logs/hihy.log" ]; then
@@ -898,7 +930,7 @@ checkSystemForUpdate() {
     local installType=""
     local updateNeeded=false
     local packageManager=""
-    local requiredPackages=("wget" "curl" "lsof" "bash" "iptables" "bc")
+    local requiredPackages=("wget" "curl" "lsof" "bash" "iptables" "bc" "openssl")
 
     # 检测包管理器
     if command -v apt >/dev/null; then
@@ -908,11 +940,11 @@ checkSystemForUpdate() {
     elif command -v yum >/dev/null; then
         packageManager="yum"
         installType="yum -y -q install"
-        upgrade="yum update -y --skip-broken"
+        upgrade="yum makecache"
     elif command -v dnf >/dev/null; then
         packageManager="dnf"
         installType="dnf -y install"
-        upgrade="dnf update -y"
+        upgrade="dnf makecache"
     elif command -v pacman >/dev/null; then
         packageManager="pacman"
         installType="pacman -Sy --noconfirm"
@@ -954,102 +986,86 @@ checkSystemForUpdate() {
         updateNeeded=true
     fi
 
-    # 检查 chrt 命令
-    if ! command -v chrt >/dev/null; then
+    # 检查 flock 命令
+    if ! command -v flock >/dev/null; then
         echoColor green "*util-linux"
+        updateNeeded=true
+    fi
+
+    if [ ! -s /etc/ssl/certs/ca-certificates.crt ] || ! command -v pgrep >/dev/null 2>&1; then
         updateNeeded=true
     fi
 
     # 仅在需要安装包时更新软件源
     if [ "$updateNeeded" = true ]; then
         echoColor purple "\n$(i18n package_manager_update_sources)"
-        ${upgrade}
+        ${upgrade} || return 1
+
+        ${installType} ca-certificates || return 1
 
         # 安装必需的包
         for package in "${requiredPackages[@]}"; do
             if ! command -v "$package" >/dev/null; then
-                ${installType} "$package"
+                ${installType} "$package" || return 1
             fi
         done
 
         # 安装 dig
         if ! command -v dig >/dev/null; then
             case $packageManager in
-                "apt") ${installType} "dnsutils" ;;
-                "yum" | "dnf") ${installType} "bind-utils" ;;
-                "pacman") ${installType} "bind-tools" ;;
-                "apk") ${installType} "bind-tools" ;;
+                "apt") ${installType} "dnsutils" || return 1 ;;
+                "yum" | "dnf") ${installType} "bind-utils" || return 1 ;;
+                "pacman") ${installType} "bind-tools" || return 1 ;;
+                "apk") ${installType} "bind-tools" || return 1 ;;
             esac
         fi
 
         # 安装 qrencode
         if ! command -v qrencode >/dev/null; then
             case $packageManager in
-                "apt") ${installType} "qrencode" ;;
-                "yum" | "dnf") ${installType} "qrencode" ;;
-                "pacman") ${installType} "qrencode" ;;
-                "apk") ${installType} "libqrencode-tools" ;;
+                "apt") ${installType} "qrencode" || return 1 ;;
+                "yum" | "dnf") ${installType} "qrencode" || return 1 ;;
+                "pacman") ${installType} "qrencode" || return 1 ;;
+                "apk") ${installType} "libqrencode-tools" || return 1 ;;
             esac
         fi
 
         # 安装 util-linux
-        if ! command -v chrt >/dev/null; then
-            ${installType} "util-linux"
+        if ! command -v flock >/dev/null; then
+            ${installType} "util-linux" || return 1
         fi
 
-        # 确保有 pkill 命令
-        if ! command -v pkill >/dev/null 2>&1; then
+        # 确保有 pgrep 命令
+        if ! command -v pgrep >/dev/null 2>&1; then
             case $packageManager in
-                "apt") ${installType} "procps" ;;
-                "yum" | "dnf") ${installType} "procps" ;;
-                "pacman") ${installType} "procps" ;;
-                "apk") ${installType} "procps" ;;
+                "apt") ${installType} "procps" || return 1 ;;
+                "yum" | "dnf") ${installType} "procps" || return 1 ;;
+                "pacman") ${installType} "procps" || return 1 ;;
+                "apk") ${installType} "procps" || return 1 ;;
             esac
         fi
 
         # 确保有 crontab 命令
         if ! command -v crontab >/dev/null 2>&1; then
             case $packageManager in
-                "apt") ${installType} "cron" ;;
-                "yum" | "dnf") ${installType} "cron" ;;
-                "pacman") ${installType} "cronie" ;;
-                "apk") ${installType} "cronie" ;;
+                "apt") ${installType} "cron" || return 1 ;;
+                "yum" | "dnf") ${installType} "cron" || return 1 ;;
+                "pacman") ${installType} "cronie" || return 1 ;;
+                "apk") ${installType} "cronie" || return 1 ;;
             esac
         fi
 
         echoColor purple "\n$(i18n package_install_complete)"
     fi
 
-    # 检查 yq 命令
-    # 安装 yq
-    if ! command -v yq >/dev/null; then
-        arch=$(getArchitecture)
-        echoColor purple "$(i18n downloading_yq ${arch})..."
-        if ! downloadToFile "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${arch}" "$HIHY_YQ_BIN"; then
-            if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
-                echoColor red "$(i18n download_yq_failed_no_tool)"
-            else
-                echoColor red "$(i18n download_yq_failed_network)"
-            fi
-            exit 1
-        fi
-        chmod +x "$HIHY_YQ_BIN"
-    fi
+    installPrivateYq || return 1
 }
-
 
 # ----- 30-version.sh -----
-getLatestHihyVersion() {
-    local content
-
-    content=$(fetchRemoteBodyFromSources "$HIHY_REMOTE_SCRIPT_URL" "$HIHY_REMOTE_SCRIPT_MIRROR_URL") || return 1
-    printf '%s\n' "$content" | grep -oP '^hihyV="[^"]*"' | head -n 1 | cut -d '"' -f 2
-}
-
 getLatestHysteriaVersion() {
     local headers tag
 
-    headers=$(fetchRemoteHeadersFromSources "https://github.com/apernet/hysteria/releases/latest") || return 1
+    headers=$(fetchRemoteHeadersFromSources "https://github.com/HyNetworks/hysteria/releases/latest") || return 1
     tag=$(printf '%s\n' "$headers" | grep -i '^location:' | grep -o 'tag/[^[:space:]]*' | sed 's/tag\///;s/\r//;s/ //g' | head -n 1)
     [ -n "$tag" ] || return 1
     printf '%s\n' "$tag"
@@ -1082,181 +1098,6 @@ localCoreVersionAtLeast() {
     [ "$(printf '%s\n%s\n' "$required" "$local_version" | sort -V | head -n 1)" = "$required" ]
 }
 
-ensureVersionCheckStateDir() {
-    mkdir -p "$(dirname "$HIHY_VERSION_STATUS_FILE")" "$(dirname "$HIHY_VERSION_CHECK_LOCK_FILE")"
-}
-
-readVersionCheckValue() {
-    local file_path="$1"
-    local key="$2"
-
-    if [ ! -f "$file_path" ]; then
-        return 1
-    fi
-
-    grep -E "^${key}=" "$file_path" 2>/dev/null | head -n 1 | cut -d '=' -f 2-
-}
-
-writeVersionCheckState() {
-    local checked_at="$1"
-    local hihy_status="$2"
-    local hihy_remote="$3"
-    local core_status="$4"
-    local core_remote="$5"
-    local state_file="$HIHY_VERSION_STATUS_FILE"
-    local temp_file="${state_file}.tmp.$$"
-
-    ensureVersionCheckStateDir
-    cat >"$temp_file" <<EOF
-checked_at=${checked_at}
-hihy_status=${hihy_status}
-hihy_remote=${hihy_remote}
-core_status=${core_status}
-core_remote=${core_remote}
-EOF
-    mv "$temp_file" "$state_file"
-}
-
-acquireVersionCheckLock() {
-    local lock_file="$HIHY_VERSION_CHECK_LOCK_FILE"
-    local lock_pid=""
-
-    ensureVersionCheckStateDir
-
-    if [ -f "$lock_file" ]; then
-        lock_pid=$(readVersionCheckValue "$lock_file" "pid")
-        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-            return 1
-        fi
-        rm -f "$lock_file"
-    fi
-
-    cat >"$lock_file" <<EOF
-pid=${BASHPID:-$$}
-started_at=$(date +%s)
-EOF
-}
-
-releaseVersionCheckLock() {
-    rm -f "$HIHY_VERSION_CHECK_LOCK_FILE"
-}
-
-shouldStartVersionCheck() {
-    local now
-    local checked_at
-    local lock_pid
-
-    now=$(date +%s)
-
-    if [ -f "$HIHY_VERSION_CHECK_LOCK_FILE" ]; then
-        lock_pid=$(readVersionCheckValue "$HIHY_VERSION_CHECK_LOCK_FILE" "pid")
-        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-            return 1
-        fi
-        rm -f "$HIHY_VERSION_CHECK_LOCK_FILE"
-    fi
-
-    checked_at=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "checked_at")
-    if [ -n "$checked_at" ] && [ $((now - checked_at)) -lt "$HIHY_VERSION_CHECK_TTL" ]; then
-        return 1
-    fi
-
-    return 0
-}
-
-refreshVersionCheckState() {
-    local checked_at
-    local local_hihy_version="$hihyV"
-    local remote_hihy_version=""
-    local hihy_status="unknown"
-    local local_core_version=""
-    local remote_core_version=""
-    local core_status="missing"
-
-    if ! acquireVersionCheckLock; then
-        return 0
-    fi
-
-    checked_at=$(date +%s)
-
-    remote_hihy_version=$(getLatestHihyVersion || true)
-    if [ -n "$remote_hihy_version" ]; then
-        if [ "$local_hihy_version" != "$remote_hihy_version" ]; then
-            hihy_status="update"
-        else
-            hihy_status="current"
-        fi
-    else
-        hihy_status="error"
-    fi
-
-    local_core_version=$(getLocalHysteriaVersion || true)
-    if [ -n "$local_core_version" ]; then
-        remote_core_version=$(getLatestHysteriaVersion || true)
-        if [ -n "$remote_core_version" ]; then
-            if [ "$local_core_version" != "$remote_core_version" ]; then
-                core_status="update"
-            else
-                core_status="current"
-            fi
-        else
-            core_status="error"
-        fi
-    fi
-
-    writeVersionCheckState "$checked_at" "$hihy_status" "$remote_hihy_version" "$core_status" "$remote_core_version"
-    releaseVersionCheckLock
-}
-
-startBackgroundVersionCheck() {
-    if ! shouldStartVersionCheck; then
-        return 0
-    fi
-
-    (refreshVersionCheckState) >/dev/null 2>&1 &
-}
-
-displayCachedVersionNotifications() {
-    local hihy_status
-    local hihy_remote
-    local core_status
-    local core_remote
-    local checked_at
-    local now
-
-    if [ ! -f "$HIHY_VERSION_STATUS_FILE" ]; then
-        return 0
-    fi
-
-    checked_at=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "checked_at")
-    now=$(date +%s)
-    if [ -z "$checked_at" ] || [ $((now - checked_at)) -ge "$HIHY_VERSION_CHECK_TTL" ]; then
-        return 0
-    fi
-
-    hihy_status=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "hihy_status")
-    hihy_remote=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "hihy_remote")
-    core_status=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "core_status")
-    core_remote=$(readVersionCheckValue "$HIHY_VERSION_STATUS_FILE" "core_remote")
-
-    if [ "$hihy_status" = "update" ] && [ -n "$hihy_remote" ]; then
-        echoColor purple "$(i18n notify_hihy_update "${hihy_remote}")"
-    fi
-
-    if [ "$core_status" = "update" ] && [ -n "$core_remote" ]; then
-        echoColor purple "$(i18n notify_core_update "${core_remote}")"
-    fi
-}
-
-# 检测虚拟化类型的函数
-hihy_update_notifycation() {
-    displayCachedVersionNotifications
-}
-
-hyCore_update_notifycation() {
-    displayCachedVersionNotifications
-}
-
 
 # ----- 35-state.sh -----
 getBackupValueOrDefault() {
@@ -1267,9 +1108,9 @@ getBackupValueOrDefault() {
 
     value=$(getYamlValue "$file" "$key" 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$value" ] || [ "$value" = "null" ]; then
-        echo "$default_value"
+        printf '%s\n' "$default_value"
     else
-        echo "$value"
+        printf '%s\n' "$value"
     fi
 }
 
@@ -1325,7 +1166,9 @@ classifyInstallState() {
         return
     fi
 
-    if [ "$has_core_assets" = "true" ] && [ "$has_service_assets" = "true" ] && [ -f "$bin_link" ]; then
+    if [ "$has_core_assets" = "true" ] && [ "$has_service_assets" = "true" ] && [ -x "$bin_link" ] \
+        && [ -s "$root_dir/bin/appS" ] && [ -x "$root_dir/bin/appS" ] \
+        && [ -s "$root_dir/conf/config.yaml" ] && [ -s "$root_dir/conf/backup.yaml" ]; then
         echo "installed"
         return
     fi
@@ -1354,41 +1197,10 @@ clearInstallFailureMarker() {
     rm -f "$failure_marker"
 }
 
-recoverPartialInstallState() {
-    local root_dir="${1:-$HIHY_ROOT_DIR}"
-    local bin_link="${2:-$HIHY_BIN_LINK}"
-    local service_primary="${3:-$(getHihyServiceScriptPrimary)}"
-    local service_fallback="${4:-$(getHihyServiceScriptFallback)}"
-    local failure_marker="${5:-$(getInstallFailureMarker "$root_dir")}"
-    local rc_local="${6:-$HIHY_RC_LOCAL}"
-    local pid_file="${7:-$HIHY_PID_FILE}"
-
-    rm -f "$service_primary" "$service_fallback" "$pid_file"
-    rm -f "$root_dir/conf/config.yaml" "$root_dir/conf/backup.yaml"
-    rm -f "$failure_marker"
-
-    if [ -f "$rc_local" ]; then
-        sed -i '/\/etc\/rc\.d\/hihy start/d' "$rc_local"
-        sed -i '/\/etc\/rc\.d\/allow-port start/d' "$rc_local"
-    fi
-}
-
 
 # ----- 45-wizard.sh -----
-startInstallValidationProcess() {
-    local yaml_file="$1"
-    local debug_file="${2:-./hihy_debug.info}"
-
-    /etc/hihy/bin/appS -c "$yaml_file" server >"$debug_file" 2>&1 &
-}
-
 # ---------- 输入校验辅助 ----------
-isPositiveInt() {
-    case "${1:-}" in
-        '' | *[!0-9]*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
+isPositiveInt() { [[ "${1:-}" =~ ^(0|[1-9][0-9]*)$ ]]; }
 
 isValidPort() {
     isPositiveInt "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
@@ -1516,7 +1328,7 @@ collectHysteriaConfig() {
                 realmPassword="${realmPasswordInput}"
             fi
         fi
-        realmURI="realm://${realmPassword}@${realmAddress}/${realmName}"
+        realmURI="realm://$(urlEncode "$realmPassword")@${realmAddress}/$(urlEncode "$realmName")"
         echo -e "\n->$(i18n realm_uri_label)$(echoColor red "${realmURI}")\n"
         if command -v warp >/dev/null 2>&1 && [ -f "/etc/wireguard/warp.conf" ]; then
             echoColor purple "$(i18n warp_installed_hint)"
@@ -1533,8 +1345,7 @@ collectHysteriaConfig() {
         if [ "${warpChoice}" == "2" ]; then
             echoColor purple "$(i18n warp_installing)"
             echoColor purple "$(i18n warp_select_global_mode)"
-            wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh 2>/dev/null
-            bash menu.sh d
+            installWarpVerified d || return 1
             if [ -f "/etc/wireguard/warp.conf" ]; then
                 current_mtu=$(grep -oP '^MTU = \K\d+' /etc/wireguard/warp.conf)
                 if [ -n "${current_mtu}" ] && [ "${current_mtu}" -lt 1320 ]; then
@@ -2397,54 +2208,15 @@ autoHysteriaConfig() {
 }
 
 # ---------- 配置校验:轮询 debug 文件,返回 0=成功 1=超时 2=ACME失败 3=端口占用 ----------
-waitForValidationOutcome() {
-    local debug_file="$1"
-    local timeout="$2"
-    local elapsed=0
-    local marker
-
-    while [ "$elapsed" -lt "$timeout" ]; do
-        marker=$(grep -m1 -oE "server up and running|failed to get a certificate with ACME|bind: address already in use" "$debug_file" 2>/dev/null)
-        case "$marker" in
-            "server up and running") return 0 ;;
-            "failed to get a certificate with ACME") return 2 ;;
-            "bind: address already in use") return 3 ;;
-        esac
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-    return 1
-}
-
-stopValidationProcess() {
-    if ! command -v pkill >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
-        apk add --no-cache procps >/dev/null 2>&1
-    fi
-    killHysteriaProcess TERM
-}
-
-# 校验失败的统一善后:杀掉测试进程 -> 撤销防火墙 -> 清理本次生成的配置
-cleanupFailedValidation() {
-    local phase="$1"
-    local details="$2"
-
-    markInstallFailed "$phase" "$details"
-    stopValidationProcess
-    delHihyFirewallPort udp >/dev/null 2>&1 || true
-    delHihyFirewallPort tcp >/dev/null 2>&1 || true
-    rm -f /etc/hihy/conf/config.yaml /etc/hihy/conf/backup.yaml
-    rm -f ./hihy_debug.info
-}
-
 # ---------- 配置写入 + 校验 + 收尾(原 setHysteriaConfig 后半段,向导/一键共用) ----------
-writeHysteriaConfig() {
-    mkdir -p /etc/hihy/bin /etc/hihy/conf /etc/hihy/cert /etc/hihy/result /etc/hihy/acl/
-    acl_file="/etc/hihy/acl/acl.txt"
+generateStagedConfig() {
+    mkdir -p ${HIHY_CONFIG_ROOT}/bin ${HIHY_CONFIG_ROOT}/conf ${HIHY_CONFIG_ROOT}/cert ${HIHY_CONFIG_ROOT}/result ${HIHY_CONFIG_ROOT}/acl/ || return 1
+    acl_file="${HIHY_CONFIG_ROOT}/acl/acl.txt"
     rm -f "${acl_file}"
-    touch "${acl_file}"
-    yaml_file="/etc/hihy/conf/config.yaml"
+    touch "${acl_file}" || return 1
+    yaml_file="${HIHY_CONFIG_ROOT}/conf/config.yaml"
     rm -f "${yaml_file}"
-    touch "${yaml_file}"
+    touch "${yaml_file}" || return 1
 
     echoColor yellowBlack "$(i18n config_executing)"
     max_CRW=0
@@ -2460,106 +2232,96 @@ writeHysteriaConfig() {
     fi
 
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "listen" "${realmURI}"
+        addOrUpdateYaml "$yaml_file" "listen" "${realmURI}" || return 1
     elif [ "${portHoppingStatus}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "listen" ":${port},${portHoppingStart}-${portHoppingEnd}"
+        addOrUpdateYaml "$yaml_file" "listen" ":${port},${portHoppingStart}-${portHoppingEnd}" || return 1
     else
-        addOrUpdateYaml "$yaml_file" "listen" ":${port}"
+        addOrUpdateYaml "$yaml_file" "listen" ":${port}" || return 1
     fi
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "realm.stunServers[0]" "stun.nextcloud.com:3478"
-        addOrUpdateYaml "$yaml_file" "realm.stunServers[1]" "global.stun.twilio.com:3478"
-        addOrUpdateYaml "$yaml_file" "realm.stunTimeout" "5s"
-        addOrUpdateYaml "$yaml_file" "realm.punchTimeout" "5s"
-        addOrUpdateYaml "$yaml_file" "realm.heartbeatInterval" "30s"
-        addOrUpdateYaml "$yaml_file" "realm.insecure" "false"
-        addOrUpdateYaml "$yaml_file" "realm.ipMode" "dual"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.enabled" "true"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.timeout" "30s"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.lifetime" "10m"
+        addOrUpdateYaml "$yaml_file" "realm.stunServers[0]" "stun.nextcloud.com:3478" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.stunServers[1]" "global.stun.twilio.com:3478" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.stunTimeout" "5s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.punchTimeout" "5s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.heartbeatInterval" "30s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.insecure" "false" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.ipMode" "dual" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.enabled" "true" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.timeout" "30s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.lifetime" "10m" || return 1
     fi
-    addOrUpdateYaml "$yaml_file" "auth.type" "password"
-    addOrUpdateYaml "$yaml_file" "auth.password" "${auth_secret}"
-    addOrUpdateYaml "$yaml_file" "ignoreClientBandwidth" "${ignore_client_bandwidth}"
+    addOrUpdateYaml "$yaml_file" "auth.type" "password" || return 1
+    addOrUpdateYaml "$yaml_file" "auth.password" "${auth_secret}" || return 1
+    addOrUpdateYaml "$yaml_file" "ignoreClientBandwidth" "${ignore_client_bandwidth}" || return 1
     if [ "${congestion_mode}" != "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "congestion.type" "${congestion_type}"
+        addOrUpdateYaml "$yaml_file" "congestion.type" "${congestion_type}" || return 1
     fi
     if [ "${congestion_type}" == "bbr" ]; then
-        addOrUpdateYaml "$yaml_file" "congestion.bbrProfile" "${congestion_bbr_profile}"
+        addOrUpdateYaml "$yaml_file" "congestion.bbrProfile" "${congestion_bbr_profile}" || return 1
     fi
     if [ "${obfs_status}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "obfs.type" "${obfs_type}"
-        addOrUpdateYaml "$yaml_file" "obfs.${obfs_type}.password" "${obfs_pass}"
+        addOrUpdateYaml "$yaml_file" "obfs.type" "${obfs_type}" || return 1
+        addOrUpdateYaml "$yaml_file" "obfs.${obfs_type}.password" "${obfs_pass}" || return 1
     fi
-    # Mimic:内核 >= v2.12.0;与端口跳跃互斥(上面已保证不同时开)
-    if [ "${mimic_status}" == "true" ]; then
-        if ! localCoreVersionAtLeast "2.12.0"; then
-            echoColor yellow "$(i18n mimic_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
-            mimic_status="false"
-        else
-            # mimic 是独立项目;脚本自动下载安装(程序+内核模块),失败则回退关闭并提示
-            if installMimic; then
-                addOrUpdateYaml "$yaml_file" "mimic.enabled" "true" "bool"
-            else
-                echoColor yellow "$(i18n mimic_install_fallback)"
-                mimic_status="false"
-            fi
-        fi
+    if [ "${mimic_status}" = true ]; then
+        localCoreVersionAtLeast "2.12.0" && installMimic || return 1
+        addOrUpdateYaml "$yaml_file" "mimic.enabled" true bool || return 1
     fi
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "quic.initStreamReceiveWindow" "${SRW}"
-        addOrUpdateYaml "$yaml_file" "quic.maxStreamReceiveWindow" "${max_SRW}"
-        addOrUpdateYaml "$yaml_file" "quic.initConnReceiveWindow" "${CRW}"
-        addOrUpdateYaml "$yaml_file" "quic.maxConnReceiveWindow" "${max_CRW}"
+        addOrUpdateYaml "$yaml_file" "quic.initStreamReceiveWindow" "${SRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.maxStreamReceiveWindow" "${max_SRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.initConnReceiveWindow" "${CRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.maxConnReceiveWindow" "${max_CRW}" || return 1
     fi
-    addOrUpdateYaml "$yaml_file" "quic.maxIdleTimeout" "30s"
-    addOrUpdateYaml "$yaml_file" "quic.maxIncomingStreams" "1024"
-    addOrUpdateYaml "$yaml_file" "quic.disablePathMTUDiscovery" "false"
+    addOrUpdateYaml "$yaml_file" "quic.maxIdleTimeout" "30s" || return 1
+    addOrUpdateYaml "$yaml_file" "quic.maxIncomingStreams" "1024" || return 1
+    addOrUpdateYaml "$yaml_file" "quic.disablePathMTUDiscovery" "false" || return 1
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "bandwidth.up" "${server_upload}mbps"
-        addOrUpdateYaml "$yaml_file" "bandwidth.down" "${server_download}mbps"
+        addOrUpdateYaml "$yaml_file" "bandwidth.up" "${server_upload}mbps" || return 1
+        addOrUpdateYaml "$yaml_file" "bandwidth.down" "${server_download}mbps" || return 1
         # 仅显式关闭时写入。旧内核(mapstructure)会静默忽略该未知字段:不会崩溃,但也不生效,
         # 所以这里提示用户先更新内核,免得以为已经关闭了补偿。
         if [ "${brutal_disable_loss_comp}" == "true" ]; then
-            addOrUpdateYaml "$yaml_file" "bandwidth.disableLossCompensation" "true" "bool"
+            addOrUpdateYaml "$yaml_file" "bandwidth.disableLossCompensation" "true" "bool" || return 1
             if ! localCoreVersionAtLeast "2.10.0"; then
                 echoColor yellow "$(i18n losscomp_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
             fi
         fi
     fi
-    addOrUpdateYaml "$yaml_file" "acl.file" "${acl_file}"
+    addOrUpdateYaml "$yaml_file" "acl.file" "${acl_file}" || return 1
     if [ "${masquerade_status}" == "true" ]; then
         case ${masquerade_type} in
             "string")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "string"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.content" "${masquerade_string}"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.content-type" "text/plain"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.custom-stuff" "${masquerade_stuff}"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.statusCode" "200"
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "string" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.content" "${masquerade_string}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.content-type" "text/plain" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.custom-stuff" "${masquerade_stuff}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.statusCode" "200" || return 1
                 ;;
             "proxy")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "proxy"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.url" "${masquerade_proxy}"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.rewriteHost" "true"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.insecure" "true"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.xForwarded" "${masquerade_xforwarded}"
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "proxy" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.url" "${masquerade_proxy}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.rewriteHost" "true" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.insecure" "false" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.xForwarded" "${masquerade_xforwarded}" || return 1
                 ;;
             "file")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "file"
-                addOrUpdateYaml "$yaml_file" "masquerade.file.dir" "${masquerade_file}"
-                if [ ! -d "${masquerade_file}" ]; then
-                    mkdir -p "${masquerade_file}"
-                    wget -q -O ./mikutap.tar.gz https://github.com/HFIProgramming/mikutap/archive/refs/tags/2.0.0.tar.gz
-                    tar -xzf ./mikutap.tar.gz -C "${masquerade_file}" --strip-components=1
-                    rm -r ./mikutap.tar.gz
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "file" || return 1
+                [ ! -L "$masquerade_file" ] || return 1
+                if [ "$masquerade_file" = "$HIHY_ROOT_DIR/file" ] && { [ ! -d "$masquerade_file" ] || [ -z "$(find "$masquerade_file" -mindepth 1 -maxdepth 1 -print -quit)" ]; }; then
+                    prepareMasqueradeFiles "$HIHY_CONFIG_ROOT/file" || return 1
+                    addOrUpdateYaml "$yaml_file" masquerade.file.dir "$HIHY_CONFIG_ROOT/file" string || return 1
+                else
+                    [[ "$masquerade_file" = /* ]] && [ -d "$masquerade_file" ] && [ ! -L "$masquerade_file" ] || return 1
+                    addOrUpdateYaml "$yaml_file" masquerade.file.dir "$masquerade_file" string || return 1
                 fi
                 ;;
         esac
         if [ "${realmMode}" != "true" ] && [ "${masquerade_tcp}" == "true" ]; then
-            addOrUpdateYaml "$yaml_file" "masquerade.listenHTTPS" ":${port}"
+            addOrUpdateYaml "$yaml_file" "masquerade.listenHTTPS" ":${port}" || return 1
         fi
     fi
-    addOrUpdateYaml "$yaml_file" "speedTest" "true"
+    addOrUpdateYaml "$yaml_file" "speedTest" "true" || return 1
     pinSHA256=""
     if echo "${useAcme}" | grep -q "false"; then
         if echo "${useLocalCert}" | grep -q "false"; then
@@ -2578,32 +2340,32 @@ writeHysteriaConfig() {
             mail="no-reply@qq.com"
             echoColor purple "$(i18n cert_generating_start)"
             echoColor green "$(i18n cert_ca_key)"
-            openssl genrsa -out /etc/hihy/cert/${domain}.ca.key 2048
+            openssl genrsa -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key 2048 || return 1
             echoColor green "$(i18n cert_ca_cert)"
-            openssl req -new -x509 -days ${days} -key /etc/hihy/cert/${domain}.ca.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=Tencent Root CA" -out /etc/hihy/cert/${domain}.ca.crt
+            openssl req -new -x509 -days ${days} -key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=Tencent Root CA" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt || return 1
             echoColor green "$(i18n cert_server_key_csr)"
-            openssl req -newkey rsa:2048 -nodes -keyout /etc/hihy/cert/${domain}.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=${domain}" -out /etc/hihy/cert/${domain}.csr
+            openssl req -newkey rsa:2048 -nodes -keyout ${HIHY_CONFIG_ROOT}/cert/${domain}.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=${domain}" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.csr || return 1
             echoColor green "$(i18n cert_sign_server)"
-            openssl x509 -req -extfile <(printf "subjectAltName=DNS:${domain},DNS:${domain}") -days ${days} -in /etc/hihy/cert/${domain}.csr -CA /etc/hihy/cert/${domain}.ca.crt -CAkey /etc/hihy/cert/${domain}.ca.key -CAcreateserial -out /etc/hihy/cert/${domain}.crt
+            openssl x509 -req -extfile <(printf "subjectAltName=DNS:${domain},DNS:${domain}") -days ${days} -in ${HIHY_CONFIG_ROOT}/cert/${domain}.csr -CA ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt -CAkey ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -CAcreateserial -out ${HIHY_CONFIG_ROOT}/cert/${domain}.crt || return 1
             echoColor green "$(i18n cert_cleanup)"
-            rm -f /etc/hihy/cert/${domain}.ca.key /etc/hihy/cert/${domain}.ca.srl /etc/hihy/cert/${domain}.csr
+            rm -f ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.srl ${HIHY_CONFIG_ROOT}/cert/${domain}.csr
             echoColor green "$(i18n cert_move_ca)"
-            mv /etc/hihy/cert/${domain}.ca.crt /etc/hihy/result
+            mv ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt ${HIHY_CONFIG_ROOT}/result || return 1
             echoColor purple "$(i18n cert_success)"
-            pinSHA256=$(openssl x509 -noout -fingerprint -sha256 -in /etc/hihy/cert/${domain}.crt 2>/dev/null | sed 's/^.*=//')
-            if [ -n "${pinSHA256}" ]; then
+            pinSHA256=$(openssl x509 -noout -fingerprint -sha256 -in ${HIHY_CONFIG_ROOT}/cert/${domain}.crt 2>/dev/null | sed 's/^.*=//')
+            if isValidFingerprint "${pinSHA256}"; then
                 echoColor green "$(i18n cert_sha256_label)$(echoColor red "${pinSHA256}")"
                 echoColor purple "$(i18n cert_pinsha256_hint)"
             else
                 echoColor yellow "$(i18n cert_fingerprint_fail)"
-                insecure="1"
+                return 1
             fi
-            addOrUpdateYaml "$yaml_file" "tls.cert" "/etc/hihy/cert/${domain}.crt"
-            addOrUpdateYaml "$yaml_file" "tls.key" "/etc/hihy/cert/${domain}.key"
+            addOrUpdateYaml "$yaml_file" "tls.cert" "${HIHY_CONFIG_ROOT}/cert/${domain}.crt" || return 1
+            addOrUpdateYaml "$yaml_file" "tls.key" "${HIHY_CONFIG_ROOT}/cert/${domain}.key" || return 1
             if [ "${realmMode}" == "true" ]; then
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable" || return 1
             else
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict" || return 1
             fi
         else
             u_host=${domain}
@@ -2612,12 +2374,12 @@ writeHysteriaConfig() {
                 remarks="${domain}"
             fi
             insecure="0"
-            addOrUpdateYaml "$yaml_file" "tls.cert" "${local_cert}"
-            addOrUpdateYaml "$yaml_file" "tls.key" "${local_key}"
+            addOrUpdateYaml "$yaml_file" "tls.cert" "${local_cert}" || return 1
+            addOrUpdateYaml "$yaml_file" "tls.key" "${local_key}" || return 1
             if [ "${realmMode}" == "true" ]; then
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable" || return 1
             else
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict" || return 1
             fi
         fi
     else
@@ -2627,41 +2389,39 @@ writeHysteriaConfig() {
         if [ -z "${remarks}" ]; then
             remarks="${domain}"
         fi
-        addOrUpdateYaml "$yaml_file" "acme.domains" "${domain}"
-        addOrUpdateYaml "$yaml_file" "acme.email" "pekora@${domain}"
-        addOrUpdateYaml "$yaml_file" "acme.ca" "letsencrypt"
-        addOrUpdateYaml "$yaml_file" "acme.dir" "/etc/hihy/cert"
+        addOrUpdateYaml "$yaml_file" "acme.domains[0]" "${domain}" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.email" "pekora@${domain}" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.ca" "letsencrypt" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.dir" "${HIHY_CONFIG_ROOT}/cert" || return 1
         if [ "${useDns}" == "true" ]; then
             u_host=${ip}
-            addOrUpdateYaml "$yaml_file" "acme.type" "dns"
+            addOrUpdateYaml "$yaml_file" "acme.type" "dns" || return 1
             case ${dns} in
                 "cloudflare")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "cloudflare"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.cloudflare_api_token" "${cloudflare_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "cloudflare" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.cloudflare_api_token" "${cloudflare_api_token}" || return 1
                     ;;
                 "duckdns")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "duckdns"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_api_token" "${duckdns_api_token}"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_override_domain" "${duckdns_override_domain}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "duckdns" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_api_token" "${duckdns_api_token}" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_override_domain" "${duckdns_override_domain}" || return 1
                     ;;
                 "gandi")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "gandi"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.gandi_api_token" "${gandi_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "gandi" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.gandi_api_token" "${gandi_api_token}" || return 1
                     ;;
                 "godaddy")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "godaddy"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.godaddy_api_token" "${godaddy_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "godaddy" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.godaddy_api_token" "${godaddy_api_token}" || return 1
                     ;;
                 "vultr")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "vultr"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.vultr_api_token" "${vultr_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "vultr" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.vultr_api_token" "${vultr_api_token}" || return 1
                     ;;
             esac
         else
-            getPortBindMsg TCP 80
-            allowPort tcp 80
-            addOrUpdateYaml "$yaml_file" "acme.type" "http"
-            addOrUpdateYaml "$yaml_file" "acme.listenHost" "0.0.0.0"
+            addOrUpdateYaml "$yaml_file" "acme.type" "http" || return 1
+            addOrUpdateYaml "$yaml_file" "acme.listenHost" "0.0.0.0" || return 1
         fi
     fi
     if [ "${realmMode}" == "true" ]; then
@@ -2672,163 +2432,288 @@ writeHysteriaConfig() {
     if [ "${ech_status}" == "true" ]; then
         if ! localCoreVersionAtLeast "2.10.0"; then
             echoColor yellow "$(i18n ech_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
-            ech_status="false"
-            ech_config=""
-        elif generateEchKeypair "/etc/hihy/cert/ech.pem" "${ech_public_name}"; then
-            addOrUpdateYaml "$yaml_file" "ech.keyPath" "/etc/hihy/cert/ech.pem"
+            return 1
+        elif generateEchKeypair "${HIHY_CONFIG_ROOT}/cert/ech.pem" "${ech_public_name}"; then
+            addOrUpdateYaml "$yaml_file" "ech.keyPath" "${HIHY_CONFIG_ROOT}/cert/ech.pem" || return 1
             echoColor green "$(i18n ech_keygen_success "$(echoColor red "${ech_public_name}")")"
         else
             echoColor yellow "$(i18n ech_keygen_failed)"
-            ech_status="false"
-            ech_config=""
+            return 1
         fi
     fi
 
-    addOrUpdateYaml "$yaml_file" "sniff.enabled" "true"
-    addOrUpdateYaml "$yaml_file" "sniff.timeout" "2s"
-    addOrUpdateYaml "$yaml_file" "sniff.rewriteDomain" "false"
-    addOrUpdateYaml "$yaml_file" "sniff.tcpPorts" "80,443"
-    addOrUpdateYaml "$yaml_file" "sniff.udpPorts" "80,443"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].name" "hihy" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.mode" "auto" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.fastOpen" "false" "bool"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].name" "v4_only" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.mode" "4" "number"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.fastOpen" "false" "bool"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].name" "v6_only" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.mode" "6" "number"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.fastOpen" "false" "bool"
+    addOrUpdateYaml "$yaml_file" "sniff.enable" "true" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.timeout" "2s" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.rewriteDomain" "false" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.tcpPorts" "80,443" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.udpPorts" "80,443" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].name" "hihy" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.mode" "auto" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.fastOpen" "false" "bool" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].name" "v4_only" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.mode" "4" "number" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.fastOpen" "false" "bool" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].name" "v6_only" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.mode" "6" "number" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.fastOpen" "false" "bool" || return 1
     trafficPort=$(($(od -An -N2 -i /dev/urandom) % (65534 - 10001) + 10001))
     if [ "$trafficPort" == "${port}" ]; then
         trafficPort=$((${port} + 1))
     fi
-    addOrUpdateYaml "$yaml_file" "trafficStats.listen" "127.0.0.1:${trafficPort}"
-    addOrUpdateYaml "$yaml_file" "trafficStats.secret" "${auth_secret}"
+    addOrUpdateYaml "$yaml_file" "trafficStats.listen" "127.0.0.1:${trafficPort}" || return 1
+    addOrUpdateYaml "$yaml_file" "trafficStats.secret" "$(generate_uuid)" "string" || return 1
     if [ "${block_http3}" == "true" ]; then
         echo -e "reject(all, udp/443)" >${acl_file}
     fi
-    if [ ${max_CRW} -gt 0 ]; then
-        if sysctl -w net.core.rmem_max=${max_CRW} >/dev/null 2>&1 \
-            && sysctl -w net.core.wmem_max=${max_CRW} >/dev/null 2>&1; then
-            # 持久化,重启后依然生效(容器环境可能只读,失败仅提示)
-            if mkdir -p /etc/sysctl.d 2>/dev/null; then
-                printf 'net.core.rmem_max=%s\nnet.core.wmem_max=%s\n' "${max_CRW}" "${max_CRW}" \
-                    >/etc/sysctl.d/99-hihy.conf 2>/dev/null || true
-            fi
-        else
-            echoColor yellow "$(i18n sysctl_apply_failed)"
-        fi
-    fi
-    local validation_timeout=15
-    if [ "${useAcme}" == "true" ]; then
-        validation_timeout=60
-    fi
-    echoColor purple "\n$(i18n test_config)\n"
-    echoColor gray "$(i18n validation_waiting "${validation_timeout}")"
-    startInstallValidationProcess "${yaml_file}" "./hihy_debug.info"
-    waitForValidationOutcome "./hihy_debug.info" "${validation_timeout}"
-    case $? in
-        0)
-            echoColor green "$(i18n test_success)"
-            echoColor purple "$(i18n stop_test_program)"
-            stopValidationProcess
-            rm -f ./hihy_debug.info
-            if [ "${realmMode}" != "true" ]; then
-                allowPort udp ${port}
-                if [ "${portHoppingStatus}" == "true" ]; then
-                    allowPort udp "${portHoppingStart}:${portHoppingEnd}"
-                fi
-                if [ "${masquerade_tcp}" == "true" ]; then
-                    getPortBindMsg TCP ${port}
-                    allowPort tcp ${port}
-                fi
-            fi
-            echoColor purple "$(i18n generating_config)"
-            ;;
-        2)
-            echoColor red "$(i18n acme_cert_fail ${u_host})"
-            cleanupFailedValidation "certificate" "failed to get a certificate with ACME"
-            echoColor yellow "$(i18n acme_incomplete_state)"
-            exit 1
-            ;;
-        3)
-            cleanupFailedValidation "port-bind" "bind: address already in use"
-            echoColor red "$(i18n port_bind_fail)"
-            echoColor yellow "$(i18n acme_incomplete_state)"
-            exit 1
-            ;;
-        *)
-            echoColor red "$(i18n unknown_error)"
-            echoColor yellow "$(i18n unknown_error_incomplete_state)"
-            cat ./hihy_debug.info
-            cleanupFailedValidation "config-test" "unknown error while validating generated config"
-            exit 1
-            ;;
-    esac
-    backup_file="/etc/hihy/conf/backup.yaml"
+    backup_file="${HIHY_CONFIG_ROOT}/conf/backup.yaml"
     rm -f "${backup_file}"
-    touch "${backup_file}"
-    addOrUpdateYaml ${backup_file} "remarks" "${remarks}"
-    addOrUpdateYaml ${backup_file} "serverAddress" "${u_host}" "string"
-    addOrUpdateYaml ${backup_file} "serverPort" "${port}"
-    addOrUpdateYaml ${backup_file} "congestionMode" "${congestion_mode}"
-    addOrUpdateYaml ${backup_file} "congestionType" "${congestion_type}"
-    addOrUpdateYaml ${backup_file} "ignoreClientBandwidth" "${ignore_client_bandwidth}"
+    touch "${backup_file}" || return 1
+    addOrUpdateYaml ${backup_file} "remarks" "${remarks}" || return 1
+    addOrUpdateYaml ${backup_file} "serverAddress" "${u_host}" "string" || return 1
+    addOrUpdateYaml ${backup_file} "serverPort" "${port}" || return 1
+    addOrUpdateYaml ${backup_file} "congestionMode" "${congestion_mode}" || return 1
+    addOrUpdateYaml ${backup_file} "congestionType" "${congestion_type}" || return 1
+    addOrUpdateYaml ${backup_file} "ignoreClientBandwidth" "${ignore_client_bandwidth}" || return 1
     if [ "${congestion_type}" == "bbr" ]; then
-        addOrUpdateYaml ${backup_file} "congestionBbrProfile" "${congestion_bbr_profile}"
+        addOrUpdateYaml ${backup_file} "congestionBbrProfile" "${congestion_bbr_profile}" || return 1
     fi
-    addOrUpdateYaml ${backup_file} "portHoppingStatus" "${portHoppingStatus}"
-    addOrUpdateYaml ${backup_file} "portHoppingStart" "${portHoppingStart}"
-    addOrUpdateYaml ${backup_file} "portHoppingEnd" "${portHoppingEnd}"
-    addOrUpdateYaml ${backup_file} "portHoppingIntervalMode" "${portHoppingIntervalMode}"
-    addOrUpdateYaml ${backup_file} "portHoppingHopInterval" "${portHoppingHopInterval}"
-    addOrUpdateYaml ${backup_file} "portHoppingMinHopInterval" "${portHoppingMinHopInterval}"
-    addOrUpdateYaml ${backup_file} "portHoppingMaxHopInterval" "${portHoppingMaxHopInterval}"
-    addOrUpdateYaml ${backup_file} "domain" "${domain}"
-    addOrUpdateYaml ${backup_file} "trafficPort" "${trafficPort}"
-    addOrUpdateYaml ${backup_file} "socks5_status" "false"
-    addOrUpdateYaml ${backup_file} "realmMode" "${realmMode}"
+    addOrUpdateYaml ${backup_file} "portHoppingStatus" "${portHoppingStatus}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingStart" "${portHoppingStart}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingEnd" "${portHoppingEnd}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingIntervalMode" "${portHoppingIntervalMode}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingHopInterval" "${portHoppingHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingMinHopInterval" "${portHoppingMinHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingMaxHopInterval" "${portHoppingMaxHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "domain" "${domain}" || return 1
+    addOrUpdateYaml ${backup_file} "trafficPort" "${trafficPort}" || return 1
+    addOrUpdateYaml ${backup_file} "socks5_status" "false" || return 1
+    addOrUpdateYaml ${backup_file} "realmMode" "${realmMode}" || return 1
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml ${backup_file} "realmURI" "${realmURI}"
-        addOrUpdateYaml ${backup_file} "realmName" "${realmName}"
+        addOrUpdateYaml ${backup_file} "realmURI" "${realmURI}" || return 1
+        addOrUpdateYaml ${backup_file} "realmName" "${realmName}" || return 1
     fi
-    addOrUpdateYaml ${backup_file} "masquerade_status" "${masquerade_status}"
-    addOrUpdateYaml ${backup_file} "masquerade_xforwarded" "${masquerade_xforwarded}"
-    addOrUpdateYaml ${backup_file} "masquerade_tcp" "${masquerade_tcp}"
-    addOrUpdateYaml ${backup_file} "ech_status" "${ech_status}"
-    addOrUpdateYaml ${backup_file} "mimic_status" "${mimic_status}"
+    addOrUpdateYaml ${backup_file} "masquerade_status" "${masquerade_status}" || return 1
+    addOrUpdateYaml ${backup_file} "masquerade_xforwarded" "${masquerade_xforwarded}" || return 1
+    addOrUpdateYaml ${backup_file} "masquerade_tcp" "${masquerade_tcp}" || return 1
+    addOrUpdateYaml ${backup_file} "ech_status" "${ech_status}" || return 1
+    addOrUpdateYaml ${backup_file} "mimic_status" "${mimic_status}" || return 1
     if [ "${ech_status}" == "true" ]; then
-        addOrUpdateYaml ${backup_file} "ech_public_name" "${ech_public_name}"
-        addOrUpdateYaml ${backup_file} "ech_config" "${ech_config}" "string"
+        addOrUpdateYaml ${backup_file} "ech_public_name" "${ech_public_name}" || return 1
+        addOrUpdateYaml ${backup_file} "ech_config" "${ech_config}" "string" || return 1
     fi
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml ${backup_file} "disable_loss_compensation" "${brutal_disable_loss_comp}"
+        addOrUpdateYaml ${backup_file} "disable_loss_compensation" "${brutal_disable_loss_comp}" || return 1
     fi
     if [ "${insecure}" == "1" ]; then
-        addOrUpdateYaml ${backup_file} "insecure" "true"
+        addOrUpdateYaml ${backup_file} "insecure" "true" || return 1
     else
-        addOrUpdateYaml ${backup_file} "insecure" "false"
+        addOrUpdateYaml ${backup_file} "insecure" "false" || return 1
     fi
     if [ -n "${pinSHA256}" ]; then
-        addOrUpdateYaml ${backup_file} "pinSHA256" "${pinSHA256}" "string"
+        addOrUpdateYaml ${backup_file} "pinSHA256" "${pinSHA256}" "string" || return 1
     fi
-    if ! installHihyLauncher; then
-        markInstallFailed "launcher" "failed to install hihy launcher"
-        echoColor red "$(i18n hihy_cmd_install_fail)"
-        exit 1
-    fi
-    clearInstallFailureMarker
-    echoColor greenWhite "$(i18n install_success)"
+    return 0
 }
 
 setHysteriaConfig() {
     setConfigDefaults
-    collectHysteriaConfig
+    collectHysteriaConfig || return 1
     writeHysteriaConfig
 }
+
+# ----- 46-transactions.sh -----
+
+# Start one validation instance and retain its exact child PID.
+startInstallValidationProcess() {
+    local config="$1" debug="$2" core="${3:-$HIHY_ROOT_DIR/bin/appS}"
+    [ ! -L "$debug" ] || return 1
+    "$core" --disable-update-check -c "$config" server 9>&- >"$debug" 2>&1 &
+    HIHY_VALIDATION_PID=$!
+}
+
+waitForValidationOutcome() {
+    local debug="$1" timeout="$2" elapsed=0
+    [[ "${HIHY_VALIDATION_PID:-}" =~ ^[0-9]+$ ]] || return 1
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if [ -n "${HIHY_VALIDATION_PID:-}" ] && ! kill -0 "$HIHY_VALIDATION_PID" 2>/dev/null; then return 1; fi
+        if grep -q 'failed to get a certificate with ACME' "$debug"; then return 2; fi
+        if grep -q 'bind: address already in use' "$debug"; then return 3; fi
+        if grep -q 'server up and running' "$debug"; then
+            sleep 1
+            kill -0 "$HIHY_VALIDATION_PID" 2>/dev/null && return 0
+            return 1
+        fi
+        sleep 1; elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+stopValidationProcess() {
+    local pid="${HIHY_VALIDATION_PID:-}" n
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    kill -TERM "$pid" 2>/dev/null || true
+    for n in 1 2 3 4 5; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    HIHY_VALIDATION_PID=""
+}
+
+# Validate operator input before writing certificate paths or stopping a service.
+validateHysteriaInputs() {
+    isValidDomain "$domain" || { securityError 'Invalid certificate DNS name.'; return 1; }
+    [ -n "$auth_secret" ] || return 1
+    [[ "$auth_secret" != *$'\n'* && "$auth_secret" != *$'\r'* ]] || return 1
+    if [ "$realmMode" != true ]; then
+        isValidPort "$port" || return 1
+        if [ "$portHoppingStatus" = true ]; then
+            isValidPort "$portHoppingStart" && isValidPort "$portHoppingEnd" \
+                && [ "$portHoppingStart" -lt "$portHoppingEnd" ] || return 1
+        fi
+    fi
+    if [ "$ech_status" = true ]; then isValidDomain "$ech_public_name" || return 1; fi
+    if [ "$congestion_mode" = brutal ]; then
+        isPositiveInt "$delay" && isPositiveInt "$download" && isPositiveInt "$upload" || return 1
+        [ "$delay" -gt 0 ] && [ "$delay" -le 10000 ] && [ "$download" -gt 0 ] && [ "$download" -le 100000 ] \
+            && [ "$upload" -gt 0 ] && [ "$upload" -le 100000 ] || return 1
+    fi
+    if [ "$useLocalCert" = true ]; then
+        [[ "$local_cert" = /* && "$local_key" = /* ]] && [ -r "$local_cert" ] && [ -r "$local_key" ] || return 1
+    fi
+    if [ "$masquerade_status" = true ] && [ "$masquerade_type" = proxy ]; then
+        [[ "$masquerade_proxy" = https://* || "$masquerade_proxy" = http://* ]] || return 1
+    fi
+}
+
+# Apply a complete candidate with configuration, certificate and service rollback.
+writeHysteriaConfig() (
+    local transaction candidate backup dir field value was_running=false stopped=false activated=false success=false timeout=15
+    validateHysteriaInputs || return 1
+    mkdir -p "$HIHY_ROOT_DIR" || return 1
+    [ ! -L "$HIHY_ROOT_DIR" ] || return 1
+    transaction=$(mktemp -d "$HIHY_ROOT_DIR/.config.XXXXXXXX") || return 1
+    candidate="$transaction/candidate"; backup="$transaction/previous"
+    mkdir -p "$candidate" "$backup" || return 1
+    rollbackConfiguration() {
+        local rc=$? part
+        stopValidationProcess
+        if [ "$success" != true ]; then
+            restoreFirewallLedger "$transaction/firewall.before" || rc=1
+            if [ "$activated" = true ]; then
+                [ "$was_running" != true ] || stop >/dev/null 2>&1 || true
+                for part in conf cert result acl file; do
+                    rm -rf -- "$HIHY_ROOT_DIR/$part"
+                    [ ! -d "$backup/$part" ] || cp -a -- "$backup/$part" "$HIHY_ROOT_DIR/$part" || rc=1
+                done
+            fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+        fi
+        rm -rf -- "$transaction"
+        return "$rc"
+    }
+    trap rollbackConfiguration EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    snapshotFirewallLedger "$transaction/firewall.before" || return 1
+    for dir in conf cert result acl file; do
+        [ ! -L "$HIHY_ROOT_DIR/$dir" ] || return 1
+        if [ -d "$HIHY_ROOT_DIR/$dir" ]; then cp -a -- "$HIHY_ROOT_DIR/$dir" "$backup/$dir" || return 1; fi
+    done
+    HIHY_CONFIG_ROOT="$candidate"
+    generateStagedConfig || return 1
+    if [ -f "$backup/acl/acl.txt" ]; then
+        grep -Fxv 'reject(all, udp/443)' "$backup/acl/acl.txt" >"$candidate/acl/acl.txt" || [ $? -eq 1 ] || return 1
+        if [ "$block_http3" = true ]; then printf '%s\n' 'reject(all, udp/443)' >>"$candidate/acl/acl.txt"; fi
+    fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    if [ "$useAcme" = true ]; then timeout=60; [ "$useDns" = true ] || allowPort tcp 80 || return 1; fi
+    startInstallValidationProcess "$candidate/conf/config.yaml" "$transaction/validation.log" || return 1
+    if ! waitForValidationOutcome "$transaction/validation.log" "$timeout"; then
+        securityError 'Candidate configuration failed to start; previous configuration is retained.'
+        return 1
+    fi
+    stopValidationProcess
+    for field in tls.cert tls.key ech.keyPath acme.dir acl.file masquerade.file.dir; do
+        value=$(getYamlValue "$candidate/conf/config.yaml" "$field") || return 1
+        case "$value" in "$candidate"/*) addOrUpdateYaml "$candidate/conf/config.yaml" "$field" "$HIHY_ROOT_DIR/${value#"$candidate/"}" string || return 1 ;; esac
+    done
+    snapshotFirewallLedger "$candidate/conf/firewall.tsv" || return 1
+    activated=true
+    for dir in conf cert result acl file; do
+        if [ "$dir" = file ] && [ ! -d "$candidate/file" ] && [ ! -d "$backup/file" ]; then continue; fi
+        mkdir -p "$candidate/$dir" || return 1
+        if [ -d "$backup/$dir" ]; then cp -an -- "$backup/$dir/." "$candidate/$dir/" || return 1; fi
+        rm -rf -- "$HIHY_ROOT_DIR/$dir"
+        mv -- "$candidate/$dir" "$HIHY_ROOT_DIR/$dir" || return 1
+    done
+    delHihyFirewallPort udp || return 1
+    delHihyFirewallPort tcp || return 1
+    if [ "$realmMode" != true ]; then
+        allowPort udp "$port" || return 1
+        [ "$portHoppingStatus" != true ] || allowPort udp "$portHoppingStart:$portHoppingEnd" || return 1
+        [ "$masquerade_tcp" != true ] || allowPort tcp "$port" || return 1
+    fi
+    if [ "$useAcme" = true ] && [ "$useDns" != true ]; then allowPort tcp 80 || return 1; fi
+    secureInstallPermissions || return 1
+    if [ "$was_running" = true ]; then start && [ "$(getServiceRunState)" = running ] || return 1; fi
+    if [ "${max_CRW:-0}" -gt 0 ]; then
+        if sysctl -w "net.core.rmem_max=$max_CRW" "net.core.wmem_max=$max_CRW" >/dev/null 2>&1; then
+            if [ ! -e /etc/sysctl.d/99-hihy.conf ] || [ -f "$HIHY_ROOT_DIR/conf/sysctl-owned" ]; then
+            : >"$HIHY_ROOT_DIR/conf/sysctl-owned"
+            printf 'net.core.rmem_max=%s\nnet.core.wmem_max=%s\n' "$max_CRW" "$max_CRW" >/etc/sysctl.d/99-hihy.conf
+            fi
+        fi
+    fi
+    success=true
+)
+
+# ----- 47-edits.sh -----
+# Commit validated server/ACL edits, retaining the previous running state.
+commitServerEdit() (
+    local candidate="$1" acl_candidate="${2:-}" socks_status="${3:-}" dir live="$HIHY_ROOT_DIR/conf/config.yaml"
+    local was_running=false stopped=false activated=false success=false
+    dir=$(mktemp -d "$HIHY_ROOT_DIR/.edit.XXXXXXXX") || return 1
+    rollbackEdit() {
+        local rc=$?
+        stopValidationProcess
+        if [ "$success" != true ]; then
+            if [ "$activated" = true ]; then
+                [ "$was_running" != true ] || stop >/dev/null 2>&1 || true
+                cp -p -- "$dir/config.old" "$live" || rc=1
+                cp -p -- "$dir/backup.old" "$HIHY_ROOT_DIR/conf/backup.yaml" || rc=1
+                [ ! -f "$dir/acl.old" ] || cp -p -- "$dir/acl.old" "$HIHY_ROOT_DIR/acl/acl.txt" || rc=1
+            fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+        fi
+        rm -rf -- "$dir"
+        return "$rc"
+    }
+    trap rollbackEdit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    cp -p -- "$live" "$dir/config.old" && cp -p -- "$HIHY_ROOT_DIR/conf/backup.yaml" "$dir/backup.old" || return 1
+    cp -- "$candidate" "$dir/config.new.yaml" && cp -- "$dir/backup.old" "$dir/backup.new.yaml" || return 1
+    if [ -n "$acl_candidate" ]; then
+        cp -p -- "$HIHY_ROOT_DIR/acl/acl.txt" "$dir/acl.old" && cp -- "$acl_candidate" "$dir/acl.new" || return 1
+        addOrUpdateYaml "$dir/config.new.yaml" acl.file "$dir/acl.new" string || return 1
+    fi
+    [ -z "$socks_status" ] || addOrUpdateYaml "$dir/backup.new.yaml" socks5_status "$socks_status" bool || return 1
+    if localCoreVersionAtLeast 2.14.0; then
+        "$HIHY_ROOT_DIR/bin/appS" --disable-update-check acl test -c "$dir/config.new.yaml" --no-resolve example.invalid:443 >"$dir/acl-test.log" 2>&1 || return 1
+    fi
+    if [ "$(getServiceRunState)" = running ]; then was_running=true; stop || return 1; stopped=true; fi
+    startInstallValidationProcess "$dir/config.new.yaml" "$dir/validation.log" || return 1
+    waitForValidationOutcome "$dir/validation.log" 15 || return 1
+    stopValidationProcess
+    if [ -n "$acl_candidate" ]; then addOrUpdateYaml "$dir/config.new.yaml" acl.file "$HIHY_ROOT_DIR/acl/acl.txt" string || return 1; fi
+    activated=true
+    [ -z "$acl_candidate" ] || mv -f -- "$dir/acl.new" "$HIHY_ROOT_DIR/acl/acl.txt" || return 1
+    mv -f -- "$dir/config.new.yaml" "$live" && mv -f -- "$dir/backup.new.yaml" "$HIHY_ROOT_DIR/conf/backup.yaml" || return 1
+    if [ "$was_running" = true ]; then start && [ "$(getServiceRunState)" = running ] || return 1; fi
+    success=true
+)
 
 # ----- 50-core.sh -----
 # hysteria release 资产的架构后缀:复用 getArchitecture 单一映射表,
@@ -2848,112 +2733,129 @@ getHysteriaCoreArch() {
     esac
 }
 
-downloadHysteriaCore() {
-    local version
-    version=$(getLatestHysteriaVersion)
 
-    if [ -z "$version" ]; then
-        echoColor red "$(i18n network_error_get_latest_version)"
-        return 1
-    fi
-
-    echo -e "$(i18n latest_hysteria_version) $(echoColor red "${version}")\n$(i18n core_downloading)"
-
-    local arch
-    arch=$(getHysteriaCoreArch)
-    if [ -z "$arch" ]; then
-        echoColor yellowBlack "$(i18n unsupported_arch "$(uname -m)")"
-        return 1
-    fi
-    local download_url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-${arch}"
-
-    # 下载到临时文件,校验后原子替换,避免失败时破坏现有可用内核
-    mkdir -p /etc/hihy/bin
-    local temp_bin="/etc/hihy/bin/.appS.tmp.$$"
-
-    if command -v wget >/dev/null 2>&1; then
-        wget -q -O "$temp_bin" --no-check-certificate "$download_url" &
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$temp_bin" "$download_url" &
-    else
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-
-    local dl_pid=$!
-    local spin='-\|/'
-    local i=0
-    while kill -0 $dl_pid 2>/dev/null; do
-        printf "\r\033[K$(i18n core_downloading) %s" "${spin:i++%4:1}"
-        sleep 0.3
-    done
-    wait $dl_pid
-    local dl_rc=$?
-    printf "\r\033[K"
-    if [ $dl_rc -ne 0 ] || [ ! -s "$temp_bin" ]; then
-        rm -f "$temp_bin"
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-
-    # ELF 魔数校验:防止把镜像/网关返回的错误页当成二进制装进去
-    if [ "$(head -c 4 "$temp_bin" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
-        rm -f "$temp_bin"
-        echoColor red "$(i18n core_download_invalid)"
-        return 1
-    fi
-
-    chmod 755 "$temp_bin"
-    mv "$temp_bin" /etc/hihy/bin/appS
-    echoColor purple "\n$(i18n download_completed)"
-}
-
-updateHysteriaCore() {
-    if [ ! -f "/etc/hihy/bin/appS" ]; then
-        echoColor red "$(i18n hysteria_core_not_found)"
-        return 1
-    fi
-
-    local localV
-    localV=$(getLocalHysteriaVersion || true)
-    local remoteV
-    remoteV=$(getLatestHysteriaVersion || true)
-    echo -e "$(i18n local_core_version) $(echoColor red "${localV}")"
-    echo -e "$(i18n remote_core_version) $(echoColor red "${remoteV}")"
-
-    # 拿不到远端版本时不要盲目重装(旧逻辑会当作"有更新"直接下载,网络故障时半途报废)
-    if [ -z "${remoteV}" ]; then
-        echoColor yellow "$(i18n update_skip_no_remote)"
-        return 1
-    fi
-
-    if [ "${localV}" = "${remoteV}" ]; then
-        echoColor green "$(i18n already_latest_version)"
-        return 0
-    fi
-
-    local was_running="false"
-    if [ "$(getServiceRunState)" = "running" ]; then
-        was_running="true"
-        stop
-        killHysteriaProcess TERM
-    fi
-
-    if ! downloadHysteriaCore; then
-        # 下载失败时旧内核仍完好,恢复服务
-        if [ "${was_running}" == "true" ]; then
-            start
+# Install the pinned private YAML tool without changing the system yq.
+installPrivateYq() {
+    local arch expected temp actual
+    arch=$(getArchitecture)
+    case "$arch" in
+        amd64) expected=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973 ;;
+        arm64) expected=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67 ;;
+        *) securityError "No pinned yq artifact for $arch."; return 1 ;;
+    esac
+    mkdir -p "$(dirname "$HIHY_YQ_BIN")" || return 1
+    [ ! -L "$HIHY_YQ_BIN" ] || return 1
+    actual=""
+    [ ! -f "$HIHY_YQ_BIN" ] || actual=$(sha256sum "$HIHY_YQ_BIN" | awk '{print $1}')
+    if [ "$actual" != "$expected" ]; then
+        temp=$(mktemp "$(dirname "$HIHY_YQ_BIN")/.yq.XXXXXXXX") || return 1
+        if ! downloadVerifiedFile "https://github.com/mikefarah/yq/releases/download/${HIHY_YQ_VERSION}/yq_linux_${arch}" "$temp" "$expected"; then
+            rm -f -- "$temp"; return 1
         fi
-        return 1
+        chmod 700 "$temp" && mv -f -- "$temp" "$HIHY_YQ_BIN" || return 1
     fi
-    # 清除版本检查缓存，确保下次运行重新检查（避免显示过时的"有新版本"通知）
-    rm -f "$HIHY_VERSION_STATUS_FILE"
-
-    if [ "${was_running}" == "true" ]; then
-        start
-    fi
-    echoColor green "$(i18n hysteria_core_update_done)"
+    export PATH="$(dirname "$HIHY_YQ_BIN"):$PATH"
 }
+
+validCoreVersion() { [[ "$1" =~ ^app/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# Inspect ELF class, byte order and machine before executing a downloaded binary.
+validateCoreArchitecture() {
+    local file="$1" arch="$2" expected header machine
+    case "$arch" in
+        amd64) expected=0201:3e00 ;;
+        arm64) expected=0201:b700 ;;
+        386) expected=0101:0300 ;;
+        arm) expected=0101:2800 ;;
+        s390x) expected=0202:0016 ;;
+        ppc64le) expected=0201:1500 ;;
+        loong64) expected=0201:0201 ;;
+        mipsle) expected=0101:0800 ;;
+        *) return 1 ;;
+    esac
+    [ "$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ] || return 1
+    header=$(od -An -tx1 -j4 -N2 "$file" | tr -d ' \n')
+    machine=$(od -An -tx1 -j18 -N2 "$file" | tr -d ' \n')
+    [ "$header:$machine" = "$expected" ]
+}
+
+# Fetch a version once, verify its manifest and artifact, then expose the candidate.
+fetchHysteriaCandidate() (
+    local version="$1" dest="$2" arch base temp expected
+    validCoreVersion "$version" || { securityError 'Invalid stable Hysteria version.'; return 1; }
+    arch=$(getHysteriaCoreArch)
+    [ -n "$arch" ] || return 1
+    base="https://github.com/HyNetworks/hysteria/releases/download/$version"
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    if [ "$version" = app/v2.14.0 ]; then
+        downloadVerifiedFile "$base/hashes.txt" "$temp/hashes" ab844879a3323b948c2fcd338c4d06a888255e44963b985ac98cd4b32e8a5627 || return 1
+    else
+        downloadToFile "$base/hashes.txt" "$temp/hashes" || return 1
+    fi
+    expected=$(awk -v file="hysteria-linux-$arch" '$2 == file || $2 == "build/" file {print $1}' "$temp/hashes")
+    isValidSHA256 "$expected" || { securityError "Missing or duplicate checksum for $arch."; return 1; }
+    downloadVerifiedFile "$base/hysteria-linux-$arch" "$temp/core" "$expected" || return 1
+    validateCoreArchitecture "$temp/core" "$arch" || { securityError 'Downloaded core has the wrong ELF architecture.'; return 1; }
+    chmod 700 "$temp/core" || return 1
+    [ "$(getLocalHysteriaVersion "$temp/core")" = "$version" ] || { securityError 'Downloaded core version/architecture check failed.'; return 1; }
+    [ ! -L "$dest" ] || return 1
+    cp -- "$temp/core" "$dest" && chmod 700 "$dest"
+)
+
+downloadHysteriaCore() {
+    local version="${1:-$HIHY_CORE_VERSION}" temp
+    mkdir -p "$HIHY_ROOT_DIR/bin" || return 1
+    temp=$(mktemp "$HIHY_ROOT_DIR/bin/.appS.XXXXXXXX") || return 1
+    if fetchHysteriaCandidate "$version" "$temp"; then
+        mv -f -- "$temp" "$HIHY_ROOT_DIR/bin/appS" && return 0
+    fi
+    rm -f -- "$temp"
+    return 1
+}
+
+# Switch the verified core with rollback on any failed restart or interruption.
+updateHysteriaCore() (
+    local version="${1:-}" core="$HIHY_ROOT_DIR/bin/appS" temp was_running=false stopped=false switched=false success=false
+    [ -f "$core" ] || return 1
+    [ -n "$version" ] || version=$(getLatestHysteriaVersion) || return 1
+    validCoreVersion "$version" || return 1
+    [ "$(getLocalHysteriaVersion)" != "$version" ] || { printf '%s\n' 'Core already at requested version.'; return 0; }
+    temp=$(mktemp -d "$HIHY_ROOT_DIR/bin/.upgrade.XXXXXXXX") || return 1
+    rollbackCore() {
+        local rc=$?
+        stopValidationProcess
+        if [ "$success" != true ]; then
+            if [ "$switched" = true ]; then
+                stop >/dev/null 2>&1 || true
+                mv -f -- "$temp/previous" "$core" || rc=1
+            fi
+            if [ "$stopped" = true ] && [ "$was_running" = true ]; then start || rc=1; fi
+        fi
+        rm -rf -- "$temp"
+        return "$rc"
+    }
+    trap rollbackCore EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    fetchHysteriaCandidate "$version" "$temp/candidate" || return 1
+    cp -p -- "$core" "$temp/previous" || return 1
+    if [ "$(getServiceRunState)" = running ]; then
+        was_running=true
+        stop || return 1
+        stopped=true
+    fi
+    startInstallValidationProcess "$HIHY_ROOT_DIR/conf/config.yaml" "$temp/validation.log" "$temp/candidate" || return 1
+    waitForValidationOutcome "$temp/validation.log" 60 || { securityError 'Candidate core failed configuration validation.'; return 1; }
+    stopValidationProcess
+    switched=true
+    mv -f -- "$temp/candidate" "$core" || return 1
+    if [ "$was_running" = true ]; then
+        start && [ "$(getServiceRunState)" = running ] || return 1
+    fi
+    success=true
+    printf 'Hysteria core updated to %s\n' "$version"
+)
 
 # ----- 55-service.sh -----
 setup_rc_local_for_arch() {
@@ -3021,16 +2923,27 @@ installServiceScript() {
         mkdir -p /etc/init.d
         cat >/etc/init.d/hihy <<EOF
 #!/sbin/openrc-run
+umask 077
+exec 9>&-
 
 name="hihy"
 description="Hysteria Proxy Service"
 command="${start_cmd_prefix} /etc/hihy/bin/appS"
-command_args="--log-level info -c /etc/hihy/conf/config.yaml server"
+command_args="--disable-update-check --log-level info -c /etc/hihy/conf/config.yaml server"
 pidfile="/var/run/hihy.pid"
 output_log="/etc/hihy/logs/hihy.log"
 error_log="/etc/hihy/logs/hihy.log"
 
 extra_started_commands="log"
+
+is_running() {
+    [ -f "\$1" ] || return 1
+    PID=\$(cat "\$1")
+    case "\$PID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "\$PID" -gt 1 ] || return 1
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) return 1 ;; esac
+    kill -0 "\$PID" 2>/dev/null
+}
 
 depend() {
     need net
@@ -3038,17 +2951,18 @@ depend() {
 }
 
 start_pre() {
-    checkpath --directory --owner root:root --mode 0755 /etc/hihy/logs
+    checkpath --directory --owner root:root --mode 0700 /etc/hihy/logs
 }
 
 start() {
-    if [ -f "\$pidfile" ] && kill -0 \$(cat "\$pidfile") 2>/dev/null; then
+    if is_running "\$pidfile"; then
         eerror "hihy is already running"
         return 1
     fi
 
     ebegin "Starting hihy"
     mkdir -p \$(dirname "\$output_log")
+    "$HIHY_BIN_LINK" firewallRestore || return 1
     DAEMON_WRAP=""
     if command -v setsid >/dev/null 2>&1; then
         DAEMON_WRAP="setsid"
@@ -3071,6 +2985,7 @@ stop() {
     fi
 
     PID=\$(cat "\$pidfile")
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) rm -f "\$pidfile"; return 1 ;; esac
     ebegin "Stopping hihy"
     kill "\$PID" 2>/dev/null
     n=0
@@ -3094,7 +3009,7 @@ restart() {
 }
 
 status() {
-    if [ -f "\$pidfile" ] && kill -0 \$(cat "\$pidfile") 2>/dev/null; then
+    if is_running "\$pidfile"; then
         einfo "hihy is running"
     else
         einfo "hihy is not running"
@@ -3112,27 +3027,39 @@ EOF
         mkdir -p /etc/rc.d
         cat >/etc/rc.d/hihy <<EOF
 #!/bin/sh
+umask 077
+exec 9>&-
 
 HIHY_PATH="/etc/hihy"
 PID_FILE="/var/run/hihy.pid"
 LOG_FILE="\$HIHY_PATH/logs/hihy.log"
 START_CMD_PREFIX="${start_cmd_prefix}"
 
+is_running() {
+    [ -f "\$1" ] || return 1
+    PID=\$(cat "\$1")
+    case "\$PID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "\$PID" -gt 1 ] || return 1
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) return 1 ;; esac
+    kill -0 "\$PID" 2>/dev/null
+}
+
 start() {
-    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+    if is_running "\$PID_FILE"; then
         echo "hihy is already running"
         return 1
     fi
 
     echo "Starting hihy..."
+    "$HIHY_BIN_LINK" firewallRestore || return 1
     DAEMON_WRAP=""
     if command -v setsid >/dev/null 2>&1; then
         DAEMON_WRAP="setsid"
     fi
     if [ -n "\$START_CMD_PREFIX" ]; then
-        nohup \$DAEMON_WRAP \$START_CMD_PREFIX \$HIHY_PATH/bin/appS --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
+        nohup \$DAEMON_WRAP \$START_CMD_PREFIX \$HIHY_PATH/bin/appS --disable-update-check --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
     else
-        nohup \$DAEMON_WRAP \$HIHY_PATH/bin/appS --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
+        nohup \$DAEMON_WRAP \$HIHY_PATH/bin/appS --disable-update-check --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
     fi
     echo \$! > "\$PID_FILE"
     sleep 1
@@ -3150,6 +3077,7 @@ stop() {
     fi
 
     PID=\$(cat "\$PID_FILE")
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) rm -f "\$PID_FILE"; return 1 ;; esac
     echo "Stopping hihy..."
     kill "\$PID" 2>/dev/null
     n=0
@@ -3172,7 +3100,7 @@ restart() {
 }
 
 status() {
-    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+    if is_running "\$PID_FILE"; then
         echo "hihy is running"
     else
         echo "hihy is not running"
@@ -3206,7 +3134,7 @@ EOF
         fi
         chmod +x /etc/rc.local 2>/dev/null || true
         if ! grep -q "/etc/rc.d/hihy start" /etc/rc.local; then
-            echo "/etc/rc.d/hihy start" >>/etc/rc.local
+            appendRcLocalCommand "/etc/rc.d/hihy start" || return 1
         fi
     fi
 }
@@ -3222,13 +3150,8 @@ install() {
     fi
 
     if [ "$install_state" = "partially-installed" ]; then
-        echoColor yellow "$(i18n partial_install_cleanup)"
-        killHysteriaProcess KILL
-        delHihyFirewallPort udp >/dev/null 2>&1 || true
-        delHihyFirewallPort tcp >/dev/null 2>&1 || true
-        cleanupHysteria2Iptables >/dev/null 2>&1 || true
-        recoverPartialInstallState
-        echoColor purple "$(i18n partial_install_recovered)"
+        securityError "Existing incomplete installation; inspect and uninstall explicitly before retrying."
+        return 1
     fi
 
     # 创建必要目录
@@ -3243,35 +3166,38 @@ install() {
         exit 1
     fi
 
-    checkSystemForUpdate
+    checkSystemForUpdate || return 1
     if ! downloadHysteriaCore; then
         markInstallFailed "core-download" "failed to download hysteria core"
         exit 1
     fi
     if [ "$mode" = "auto" ]; then
-        autoHysteriaConfig
+        autoHysteriaConfig || return 1
     else
-        setHysteriaConfig
+        setHysteriaConfig || return 1
     fi
 
     # 写入服务脚本并启动(独立函数,重新配置时也会刷新服务脚本)
-    installServiceScript
+    installServiceScript || return 1
     if [ -f "/etc/alpine-release" ]; then
-        rc-service hihy start
+        rc-service hihy start || return 1
     else
-        /etc/rc.d/hihy start
+        /etc/rc.d/hihy start || return 1
     fi
 
-    # 添加定时任务(先去重,避免重装时重复堆积)
-    crontab -l >./crontab.tmp 2>/dev/null || touch ./crontab.tmp
-    if ! grep -q "hihy cronTask" ./crontab.tmp; then
-        echo "15 4 * * 1 hihy cronTask" >>./crontab.tmp
-        crontab ./crontab.tmp
+    local cron_tmp
+    cron_tmp=$(mktemp) || return 1
+    crontab -l >"$cron_tmp" 2>/dev/null || true
+    if ! grep -Fq "hihy cronTask" "$cron_tmp"; then
+        printf '15 4 * * 1 %s cronTask\n' "$HIHY_BIN_LINK" >>"$cron_tmp"
+        crontab "$cron_tmp" || { rm -f "$cron_tmp"; return 1; }
     fi
-    rm -f ./crontab.tmp
+    rm -f -- "$cron_tmp"
+    secureInstallPermissions || return 1
     setup_rc_local_for_arch
 
-    generate_client_config
+    clearInstallFailureMarker
+    generate_client_config || return 1
     echoColor yellowBlack "$(i18n install_done)"
 }
 
@@ -3300,9 +3226,11 @@ start() {
             echoColor green "$(i18n service_start_success)"
         else
             echoColor red "$(i18n service_start_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 stop() {
@@ -3316,9 +3244,11 @@ stop() {
             echoColor green "$(i18n service_stop_success)"
         else
             echoColor red "$(i18n service_stop_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 restart() {
@@ -3332,9 +3262,11 @@ restart() {
             echoColor green "$(i18n service_restart_success)"
         else
             echoColor red "$(i18n service_restart_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 checkStatus() {
@@ -3358,226 +3290,121 @@ checkStatus() {
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 
 # 定义格式化字节大小的函数
 
 # ----- 60-firewall.sh -----
-formatFirewallPortSpec() {
-    local port_spec="$1"
-    echo "${port_spec//-/:}"
+formatFirewallPortSpec() { printf '%s\n' "${1//-/:}"; }
+hasFirewallToken() { tr -s '[:space:]' '\n' | grep -Fxq -- "$1"; }
+
+firewallLedger() { printf '%s/conf/firewall.tsv\n' "$HIHY_ROOT_DIR"; }
+snapshotFirewallLedger() {
+    local dest="$1" source
+    source=$(firewallLedger)
+    if [ -f "$source" ]; then cp -- "$source" "$dest"; else : >"$dest"; fi
 }
 
-# 将防火墙命令输出按空白拆分成独立 token，再进行精确匹配
-hasFirewallToken() {
-    local token="$1"
-    tr -s '[:space:]' '\n' | grep -Fxq "$token"
+validFirewallPort() {
+    local spec="${1//-/:}"
+    if [[ "$spec" == *:* ]]; then
+        isValidPort "${spec%%:*}" && isValidPort "${spec##*:}" && [ "${spec%%:*}" -le "${spec##*:}" ]
+    else isValidPort "$spec"; fi
 }
 
-# 输出ufw端口开放状态
-checkUFWAllowPort() {
-    local port=$1
-    if ufw status | hasFirewallToken "$port"; then
-        echoColor purple "$(i18n firewall_ufw_open ${port})"
-    else
-        echoColor red "$(i18n firewall_ufw_open_fail ${port})"
-        exit 1
-    fi
+# Mutate one exact rule; no global save/filter/restore operation is used.
+firewallRule() {
+    local action="$1" backend="$2" proto="$3" port="$4" bin
+    [[ "$proto" = udp || "$proto" = tcp ]] && validFirewallPort "$port" || return 1
+    case "$backend" in
+        iptables|ip6tables)
+            bin="$backend"
+            if [ "$action" = add ]; then
+                "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null \
+                    || "$bin" -I INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+            else
+                if "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then
+                    "$bin" -D INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+                fi
+            fi ;;
+        ufw)
+            if [ "$action" = add ]; then ufw allow "$port/$proto" comment hihy
+            else ufw --force delete allow "$port/$proto"; fi ;;
+        firewalld)
+            local option=add-port
+            [ "$action" = add ] || option=remove-port
+            firewall-cmd --zone=public "--$option=${port//:/-}/$proto" --permanent \
+                && firewall-cmd --zone=public "--$option=${port//:/-}/$proto" ;;
+        *) return 1 ;;
+    esac
 }
 
-# 输出firewall-cmd端口开放状态
-checkFirewalldAllowPort() {
-    local port=$1
-    local protocol=$2
-    if firewall-cmd --list-ports --permanent | hasFirewallToken "${port}/${protocol}"; then
-        echoColor purple "$(i18n firewall_firewalld_open ${port} ${protocol})"
-    else
-        echoColor red "$(i18n firewall_firewalld_open_fail ${port} ${protocol})"
-        exit 1
-    fi
-}
-
+# Record only rules created by this installation.
 allowPort() {
-    # 如果防火墙启动状态则添加相应的开放端口
-    # $1 tcp/udp
-    # $2 port 或端口范围(start:end)
-    # 端口范围各后端语法不同:iptables/ufw 用 47000:48000,firewalld/nft 用 47000-48000
-    local dash_port="${2//:/-}"
-
-    # 检查是否为 Alpine Linux
-    if [ -f /etc/alpine-release ]; then
-        # Alpine 默认使用 iptables
-        if command -v iptables >/dev/null 2>&1; then
-            if ! iptables -L | grep -q "allow ${1}/${2}(hihysteria)"; then
-                iptables -I INPUT -p ${1} --dport ${2} -m comment --comment "allow ${1}/${2}(hihysteria)" -j ACCEPT
-                echoColor purple "$(i18n firewall_iptables_open ${1} ${2})"
-
-                # 保存 iptables 规则
-                if [ -d /etc/iptables ]; then
-                    iptables-save >/etc/iptables/rules.v4
-                else
-                    mkdir -p /etc/iptables
-                    iptables-save >/etc/iptables/rules.v4
-                fi
-            fi
-            return 0
-        fi
-
-        # 如果没有 iptables，检查 nftables
-        if command -v nft >/dev/null 2>&1; then
-            if ! nft list ruleset | grep -q "allow ${1}/${2}(hihysteria)"; then
-                nft add rule inet filter input ip protocol ${1} dport ${dash_port} comment "allow ${1}/${2}(hihysteria)" accept
-                echoColor purple "$(i18n firewall_nftables_open ${1} ${2})"
-                nft list ruleset >/etc/nftables.conf
-            fi
-            return 0
-        fi
-    else
-        # 其他 Linux 发行版的处理逻辑
-        # 检查 systemd
-        if command -v systemctl >/dev/null 2>&1; then
-            # 检查 netfilter-persistent
-            if systemctl is-active --quiet netfilter-persistent; then
-                if ! iptables -L | grep -q "allow ${1}/${2}(hihysteria)"; then
-                    iptables -I INPUT -p ${1} --dport ${2} -m comment --comment "allow ${1}/${2}(hihysteria)" -j ACCEPT
-                    echoColor purple "$(i18n firewall_iptables_open ${1} ${2})"
-                    netfilter-persistent save
-                fi
-                return 0
-            fi
-
-            # 检查 firewalld
-            if systemctl is-active --quiet firewalld; then
-                if ! firewall-cmd --list-ports --permanent | hasFirewallToken "${dash_port}/${1}"; then
-                    firewall-cmd --zone=public --add-port=${dash_port}/${1} --permanent
-                    echoColor purple "$(i18n firewall_firewalld_open ${1} ${2})"
-                    firewall-cmd --reload
-                fi
-                return 0
-            fi
-        fi
-
-        # 检查 UFW
-        if command -v ufw >/dev/null 2>&1; then
-            if ufw status | hasFirewallToken "active"; then
-                if ! ufw status | hasFirewallToken "${2}/${1}"; then
-                    ufw allow ${2}/${1}
-                    checkUFWAllowPort ${2}/${1}
-                fi
-                return 0
-            fi
-        fi
-
-        # 检查 iptables
-        if command -v iptables >/dev/null 2>&1; then
-            if ! iptables -L | grep -q "allow ${1}/${2}(hihysteria)"; then
-                iptables -I INPUT -p ${1} --dport ${2} -m comment --comment "allow ${1}/${2}(hihysteria)" -j ACCEPT
-                mkdir -p /etc/rc.d
-                # 在没有netfilter的情况下持久化规则
-                if [ ! -f "/etc/rc.d/allow-port" ]; then
-                    cat >/etc/rc.d/allow-port <<EOF
-#!/bin/sh
-iptables -I INPUT -p ${1} --dport ${2} -m comment --comment "allow ${1}/${2}(hihysteria)" -j ACCEPT
-EOF
-                    chmod +x /etc/rc.d/allow-port
-                else
-                    if ! grep -q "allow ${1}/${2}(hihysteria)" /etc/rc.d/allow-port; then
-                        echo "iptables -I INPUT -p ${1} --dport ${2} -m comment --comment \"allow ${1}/${2}(hihysteria)\" -j ACCEPT" >>/etc/rc.d/allow-port
-                    fi
-                fi
-
-                if [ ! -f "/etc/rc.local" ]; then
-                    touch /etc/rc.local
-                    echo "#!/bin/bash" >/etc/rc.local
-                    chmod +x /etc/rc.local
-                fi
-                if ! grep -q "/etc/rc.d/allow-port" /etc/rc.local; then
-                    echo "/etc/rc.d/allow-port start" >>/etc/rc.local
-                fi
-            fi
-
-            echoColor purple "$(i18n firewall_iptables_open ${1} ${2})"
-            return 0
-        fi
-
-        # 检查 nftables
-        if command -v nft >/dev/null 2>&1; then
-            if ! nft list ruleset | grep -q "allow ${1}/${2}(hihysteria)"; then
-                nft add rule inet filter input ip protocol ${1} dport ${dash_port} comment "allow ${1}/${2}(hihysteria)" accept
-                echoColor purple "$(i18n firewall_nftables_open ${1} ${2})"
-                nft list ruleset >/etc/nftables.conf
-            fi
-            return 0
-        fi
+    local proto="$1" port="${2//-/:}" backend=iptables ledger record
+    [[ "$proto" = udp || "$proto" = tcp ]] && validFirewallPort "$port" || return 1
+    ledger=$(firewallLedger)
+    mkdir -p "$(dirname "$ledger")" || return 1
+    [ ! -L "$ledger" ] || return 1
+    touch "$ledger" || return 1
+    if command -v ufw >/dev/null 2>&1 && ufw status | hasFirewallToken active; then
+        backend=ufw
+        if ufw status | hasFirewallToken "$port/$proto"; then return 0; fi
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        backend=firewalld
+        if firewall-cmd --zone=public --query-port="${port//:/-}/$proto" --permanent >/dev/null 2>&1; then return 0; fi
     fi
-
-    echoColor red "$(i18n no_supported_firewall ${1} ${2})"
-    return 1
+    record="$backend|$proto|$port"
+    if ! grep -Fxq -- "$record" "$ledger"; then
+        if [[ "$backend" = iptables ]] && iptables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+        printf '%s\n' "$record" >>"$ledger" || return 1
+    fi
+    firewallRule add "$backend" "$proto" "$port" || return 1
+    if [ "$backend" = iptables ] && command -v ip6tables >/dev/null 2>&1 && ip6tables -L INPUT >/dev/null 2>&1; then
+        record="ip6tables|$proto|$port"
+        if ! grep -Fxq -- "$record" "$ledger"; then
+            if ip6tables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+            printf '%s\n' "$record" >>"$ledger" || return 1
+        fi
+        firewallRule add ip6tables "$proto" "$port" || return 1
+    fi
 }
 
 delHihyFirewallPort() {
-    # 如果防火墙启动状态则删除之前的规则
-    local listen_value=$(getYamlValue "/etc/hihy/conf/config.yaml" "listen")
-    local port=$(getListenPrimaryPort "${listen_value}")
-    local port_range=$(getListenRangePart "${listen_value}")
-    local firewall_port_range=$(formatFirewallPortSpec "${port_range}")
-    local protocol=$1
-
-    # realm模式下listen值非端口号(为realm URI),跳过防火墙规则删除
-    if [ -z "${port}" ] || ! echo "${port}" | grep -qE '^[0-9]+$'; then
-        return 0
-    fi
-    # 检查并处理不同的防火墙管理工具
-    if command -v ufw >/dev/null && ufw status | hasFirewallToken "active"; then
-        if ufw status | hasFirewallToken "${port}/${protocol}"; then
-            ufw delete allow "${port}/${protocol}" 2>/dev/null
-            echoColor purple "$(i18n firewall_ufw_delete ${port}/${protocol})"
-        # 兼容旧版本未带协议的 ufw 规则
-        elif ufw status | hasFirewallToken "${port}"; then
-            ufw delete allow "${port}" 2>/dev/null
-            echoColor purple "$(i18n firewall_ufw_delete ${port})"
+    local protocol="$1" ledger temp backend proto port rc=0
+    ledger=$(firewallLedger)
+    [ -f "$ledger" ] || return 0
+    temp=$(mktemp "$(dirname "$ledger")/.firewall.XXXXXXXX") || return 1
+    while IFS='|' read -r backend proto port; do
+        [ -n "$backend" ] || continue
+        if [ "$proto" != "$protocol" ] || ! firewallRule delete "$backend" "$proto" "$port"; then
+            printf '%s|%s|%s\n' "$backend" "$proto" "$port" >>"$temp"
+            [ "$proto" != "$protocol" ] || rc=1
         fi
-        if [ -n "${firewall_port_range}" ] && ufw status | hasFirewallToken "${firewall_port_range}/${protocol}"; then
-            ufw delete allow "${firewall_port_range}/${protocol}" 2>/dev/null
-            echoColor purple "$(i18n firewall_ufw_delete ${firewall_port_range}/${protocol})"
-        fi
-    elif command -v firewall-cmd >/dev/null && systemctl is-active --quiet firewalld; then
-        if firewall-cmd --list-ports --permanent | hasFirewallToken "${port}/${protocol}"; then
-            firewall-cmd --zone=public --remove-port="${port}/${protocol}" --permanent 2>/dev/null
-            firewall-cmd --reload 2>/dev/null
-            echoColor purple "$(i18n firewall_firewalld_delete ${port}/${protocol})"
-        fi
-        # firewalld 的范围规则用 47000-48000 语法(listen 字段原生格式,勿转冒号)
-        if [ -n "${port_range}" ] && firewall-cmd --list-ports --permanent | hasFirewallToken "${port_range}/${protocol}"; then
-            firewall-cmd --zone=public --remove-port="${port_range}/${protocol}" --permanent 2>/dev/null
-            firewall-cmd --reload 2>/dev/null
-            echoColor purple "$(i18n firewall_firewalld_delete ${port_range}/${protocol})"
-        fi
-    elif command -v iptables >/dev/null; then
-        iptables-save | sed -e "/hihysteria/d" | iptables-restore
-        ip6tables-save | sed -e "/hihysteria/d" | ip6tables-restore
-        if command -v systemctl >/dev/null 2>&1; then
-            # 检查 netfilter-persistent
-            if systemctl is-active --quiet netfilter-persistent; then
-                netfilter-persistent save
-            fi
-        fi
-        if [ -f "/etc/rc.d/allow-port" ]; then
-            sed -i "/${protocol}\/${port}(hihysteria)/d" /etc/rc.d/allow-port
-            if [ -n "${firewall_port_range}" ]; then
-                local port_range_comment=$(echo "${firewall_port_range}" | sed 's/:/\\:/g')
-                sed -i "/${protocol}\/${port_range_comment}(hihysteria)/d" /etc/rc.d/allow-port
-            fi
-        fi
-
-        echoColor purple "$(i18n firewall_iptables_delete ${port}/${protocol})"
-        if [ -n "${firewall_port_range}" ]; then
-            echoColor purple "$(i18n firewall_iptables_delete ${firewall_port_range}/${protocol})"
-        fi
-    fi
+    done <"$ledger"
+    mv -f -- "$temp" "$ledger" || return 1
+    return "$rc"
 }
 
+firewallRestore() {
+    local backend proto port ledger
+    ledger=$(firewallLedger)
+    [ -f "$ledger" ] || return 0
+    while IFS='|' read -r backend proto port; do
+        [ -z "$backend" ] || firewallRule add "$backend" "$proto" "$port" || return 1
+    done <"$ledger"
+}
+
+restoreFirewallLedger() {
+    local saved="$1" ledger
+    [ -f "$saved" ] || return 0
+    ledger=$(firewallLedger)
+    delHihyFirewallPort udp && delHihyFirewallPort tcp || return 1
+    mkdir -p "$(dirname "$ledger")" || return 1
+    cp -- "$saved" "$ledger" && firewallRestore
+}
 
 # ----- 65-lifecycle.sh -----
 killHysteriaProcess() {
@@ -3587,47 +3414,23 @@ killHysteriaProcess() {
     if [ -f "$pid_file" ]; then
         local pid
         pid=$(cat "$pid_file" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        if isHysteriaPid "$pid" && kill -0 "$pid" 2>/dev/null; then
             kill "-${signal}" "$pid" 2>/dev/null || true
             sleep 1
         fi
         rm -f "$pid_file"
     fi
 
-    # 锚定 ^:只匹配以核心路径开头的命令行(nohup/setsid/chrt 均为 exec 链,最终 argv[0] 就是该路径),
-    # 否则会误杀命令行参数里恰好带此路径的无辜进程(编辑器、grep、CI 驱动脚本等)
-    if pgrep -f "^/etc/hihy/bin/appS" >/dev/null 2>&1; then
-        pkill "-${signal}" -f "^/etc/hihy/bin/appS" 2>/dev/null || true
-        sleep 2
-        if pgrep -f "^/etc/hihy/bin/appS" >/dev/null 2>&1; then
-            pkill -9 -f "^/etc/hihy/bin/appS" 2>/dev/null || true
-            sleep 1
-        fi
-    fi
+    local candidate
+    for candidate in $(pgrep -f "^$HIHY_ROOT_DIR/bin/appS" 2>/dev/null); do
+        isHysteriaPid "$candidate" || continue
+        kill "-$signal" "$candidate" 2>/dev/null || true
+    done
+
 }
 
-cleanupHysteria2Iptables() {
-    for table in nat mangle; do
-        if command -v iptables-save >/dev/null 2>&1; then
-            iptables -t "$table" -S 2>/dev/null | grep -oP 'HYSTERIA-\S+' | sort -u | while read -r chain; do
-                iptables -t "$table" -S 2>/dev/null | grep -E " -j $chain$" | sed 's/-A/-D/' | while read -r rule; do
-                    iptables -t "$table" $rule 2>/dev/null || true
-                done
-                iptables -t "$table" -F "$chain" 2>/dev/null || true
-                iptables -t "$table" -X "$chain" 2>/dev/null || true
-            done
-        fi
-        if command -v ip6tables-save >/dev/null 2>&1; then
-            ip6tables -t "$table" -S 2>/dev/null | grep -oP 'HYSTERIA-\S+' | sort -u | while read -r chain; do
-                ip6tables -t "$table" -S 2>/dev/null | grep -E " -j $chain$" | sed 's/-A/-D/' | while read -r rule; do
-                    ip6tables -t "$table" $rule 2>/dev/null || true
-                done
-                ip6tables -t "$table" -F "$chain" 2>/dev/null || true
-                ip6tables -t "$table" -X "$chain" 2>/dev/null || true
-            done
-        fi
-    done
-}
+# Port-hopping chains belong to the core and are cleaned up by its shutdown.
+cleanupHysteria2Iptables() { return 0; }
 
 checkRoot() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -3678,59 +3481,23 @@ uninstall() {
 
     killHysteriaProcess TERM
 
-    # 删除 iptables 规则（脚本和 Hysteria2 自身添加的）
-    if command -v iptables-save >/dev/null 2>&1 && command -v iptables-restore >/dev/null 2>&1; then
-        iptables-save 2>/dev/null | grep -v "hihysteria" | iptables-restore >/dev/null 2>&1 || true
-    fi
-    if command -v ip6tables-save >/dev/null 2>&1 && command -v ip6tables-restore >/dev/null 2>&1; then
-        ip6tables-save 2>/dev/null | grep -v "hihysteria" | ip6tables-restore >/dev/null 2>&1 || true
-    fi
-    cleanupHysteria2Iptables
-
-    # 保存 iptables 规则
-    if [ -d "/etc/iptables" ]; then
-        if command -v iptables-save >/dev/null 2>&1; then
-            iptables-save >/etc/iptables/rules.v4
-        fi
-        if command -v ip6tables-save >/dev/null 2>&1; then
-            ip6tables-save >/etc/iptables/rules.v6
-        fi
-    fi
-
     # 删除定时任务
-    crontab -l 2>/dev/null | grep -v "hihy cronTask" | crontab -
+    removeHihyCron || return 1
 
-    delHihyFirewallPort udp
-    delHihyFirewallPort tcp
+    delHihyFirewallPort udp || return 1
+    delHihyFirewallPort tcp || return 1
 
     # 删除相关目录和文件
+    if [ -f "$HIHY_ROOT_DIR/conf/sysctl-owned" ]; then rm -f /etc/sysctl.d/99-hihy.conf; fi
     rm -rf /etc/hihy
     rm -f /var/run/hihy.pid
-    rm -f /usr/bin/yq
-    rm -f /etc/sysctl.d/99-hihy.conf
     rm -f "$HIHY_BIN_LINK"
 
     if [ -f "/etc/rc.local" ]; then
-        sed -i '/\/etc\/rc.d\/hihy start/d' /etc/rc.local
-        if grep -q "/etc/rc.d/allow-port" /etc/rc.local; then
-            sed -i '/\/etc\/rc.d\/allow-port start/d' /etc/rc.local
-        fi
+        sed -i '\|^/etc/rc[.]d/hihy start$|d' /etc/rc.local
     fi
 
-    # 检测并提示卸载WARP/WireProxy
-    if command -v warp >/dev/null 2>&1 && [ -f "/etc/wireguard/warp.conf" ]; then
-        echoColor purple "\n$(i18n warp_detected)"
-        echoColor green "$(i18n warp_uninstall_prompt)"
-        echo -e "\033[33m\033[01m$(i18n warp_uninstall_choice)\033[0m\033[32m\n\n$(i18n prompt_enter_number):\033[0m"
-        read -r warpUninstallChoice
-        if [ -z "${warpUninstallChoice}" ] || [ "${warpUninstallChoice}" == "1" ]; then
-            echoColor purple "\n$(i18n warp_uninstalling)"
-            warp u || true
-            echoColor purple "\n$(i18n warp_uninstall_done)"
-        else
-            echoColor purple "\n$(i18n warp_keep_installation)"
-        fi
-    fi
+    # Shared third-party tools are managed by their own installers.
     clearInstallFailureMarker
 
     # 删除 Arch Linux 的 rc.local systemd 服务
@@ -4571,9 +4338,9 @@ format_bytes() {
     fi
 }
 
-getHysteriaTrafic() {
+getHysteriaTrafic() (
     local api_port=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "trafficPort" "")
-    local secret=$(getYamlValue "/etc/hihy/conf/config.yaml" "auth.password" 2>/dev/null)
+    local secret=$(getYamlValue "/etc/hihy/conf/config.yaml" "trafficStats.secret" 2>/dev/null)
 
     # 未安装/配置缺失时 trafficPort 拿不到,直接报错而不是对着乱值发请求
     if ! isPositiveInt "${api_port}"; then
@@ -4581,8 +4348,13 @@ getHysteriaTrafic() {
         return 1
     fi
 
+    local header_dir
+    local -a CURL_OPTS=()
+    header_dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$header_dir"' EXIT
     if [ -n "$secret" ]; then
-        CURL_OPTS=(-H "Authorization: $secret")
+        printf 'Authorization: %s\n' "$secret" >"$header_dir/header"
+        CURL_OPTS=(-H "@$header_dir/header")
     else
         CURL_OPTS=()
     fi
@@ -4593,7 +4365,7 @@ getHysteriaTrafic() {
     echoColor green "$(i18n traffic_stats_label)"
     # 用 yq 解析(脚本硬依赖):grep 正则对 JSON 的 { 转义/空白格式差异太脆弱,401/HTML 响应会被静默吞掉
     local traffic_resp traffic_out
-    traffic_resp=$(curl -s "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/traffic")
+    traffic_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/traffic") || return 1
     if [ -n "${traffic_resp}" ]; then
         traffic_out=$(printf '%s' "${traffic_resp}" | yq -p json -o tsv 'to_entries[] | [.key, .value.tx, .value.rx] | @tsv' 2>/dev/null)
         if [ -n "${traffic_out}" ]; then
@@ -4611,7 +4383,7 @@ getHysteriaTrafic() {
     # 在线用户部分保持不变
     echoColor green "\n$(i18n traffic_online_users_label)"
     local online_resp online_out
-    online_resp=$(curl -s "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/online")
+    online_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/online") || return 1
     if [ -n "${online_resp}" ]; then
         online_out=$(printf '%s' "${online_resp}" | yq -p json -o tsv 'to_entries[] | [.key, .value] | @tsv' 2>/dev/null)
         if [ -n "${online_out}" ]; then
@@ -4624,7 +4396,7 @@ getHysteriaTrafic() {
     fi
 
     echoColor green "\n$(i18n traffic_active_connections_label)"
-    STREAMS_OUTPUT=$(curl -s "${CURL_OPTS[@]}" -H "Accept: text/plain" "http://127.0.0.1:${api_port}/dump/streams")
+    STREAMS_OUTPUT=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" -H "Accept: text/plain" "http://127.0.0.1:${api_port}/dump/streams") || return 1
 
     if [ "$(echo "$STREAMS_OUTPUT" | wc -l)" -le 1 ]; then
         echo "$(i18n traffic_no_active_connections)"
@@ -4644,7 +4416,7 @@ getHysteriaTrafic() {
         echo "------|----------------|--------|-----|---------|---------|--------|--------|----------------------"
 
         # 使用临时文件存储排序数据
-        temp_file=$(mktemp)
+        temp_file="$header_dir/streams"
 
         echo "$STREAMS_OUTPUT" | awk \
             -v estab="$(i18n traffic_status_estab)" \
@@ -4718,7 +4490,7 @@ getHysteriaTrafic() {
     fi
 
     echo "$(i18n traffic_separator_line)"
-}
+)
 
 # 辅助函数：格式化时间显示
 format_time_display() {
@@ -4757,304 +4529,119 @@ format_time_display() {
 
 # ----- 85-actions.sh -----
 hihyUpdate() {
-    local localV=${hihyV}
-    local remoteV
-    remoteV=$(getLatestHihyVersion || true)
-    if [ -z "$remoteV" ]; then
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-    if [ "${localV}" = "${remoteV}" ]; then
-        echoColor green "$(i18n already_latest_version)"
-        # 清除版本检查缓存，防止因缓存过期而显示过时的"有新版本"通知
-        rm -f "$HIHY_VERSION_STATUS_FILE"
-        return 0
-    fi
-
-    # 先下载校验、再原子替换,统一走 installHihyScriptFromRemote。旧逻辑先 rm 再原地
-    # wget:下载失败会毁掉 hihy 命令,且对正在执行的脚本原地写入可能让 bash 读到损坏内容。
-    if ! installHihyScriptFromRemote "$HIHY_BIN_LINK"; then
-        echoColor red "$(i18n hihy_cmd_install_fail)"
-        return 1
-    fi
-    echoColor green "$(i18n hihy_update_complete)"
-    # 清除版本检查缓存，确保下次运行时重新检查并显示正确状态
-    rm -f "$HIHY_VERSION_STATUS_FILE"
+    printf '%s\n' 'Use a reviewed local installation package to update hihy. Remote self-update is disabled.'
 }
 
-changeIp64() {
-    local socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-    local config_file="/etc/hihy/conf/config.yaml"
-    if [ "${socks5_status}" == "true" ]; then
-        echoColor red "$(i18n ip_priority_socks5_active_error)"
-        return 1
-    fi
-    if [ ! -f "${config_file}" ]; then
-        echoColor red "$(i18n config_file_not_found)"
-        return 1
-    fi
-    mode_now=$(getYamlValue "$config_file" "outbounds[0].direct.mode")
-
-    echoColor purple "$(i18n ip_priority_current_mode "$(echoColor red "${mode_now}")")"
+changeIp64() (
+    local config="$HIHY_ROOT_DIR/conf/config.yaml" dir input mode
+    [ -f "$config" ] || return 1
+    [ "$(getBackupValueOrDefault "$HIHY_ROOT_DIR/conf/backup.yaml" socks5_status false)" != true ] || return 1
     echoColor yellow "$(i18n ip_priority_choice_ipv4)"
     echoColor yellow "$(i18n ip_priority_choice_ipv6)"
     echoColor yellow "$(i18n ip_priority_choice_auto)"
-    echoColor yellow "$(i18n prompt_exit)"
     read -r -p "$(i18n prompt_choose)" input
-    case $input in
-        1)
-            if [ "${mode_now}" == "46" ]; then
-                echoColor yellow "$(i18n ip_priority_already_ipv4)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "46"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-
-            ;;
-        2)
-            if [ "${mode_now}" == "64" ]; then
-                echoColor yellow "$(i18n ip_priority_already_ipv6)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "64"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-
-            ;;
-
-        3)
-            if [ "${mode_now}" == "auto" ]; then
-                echoColor yellow "$(i18n ip_priority_already_auto)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "auto"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-            ;;
-        0) return 0 ;;
-        *)
-            echoColor red "$(i18n error_input_error)"
-            return 1
-            ;;
-    esac
-}
+    case "$input" in 1) mode=46 ;; 2) mode=64 ;; 3) mode=auto ;; 0) return 0 ;; *) return 1 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    cp -- "$config" "$dir/config.yaml" || return 1
+    addOrUpdateYaml "$dir/config.yaml" outbounds[0].direct.mode "$mode" string || return 1
+    commitServerEdit "$dir/config.yaml" || return 1
+    echoColor green "$(i18n switch_success)"
+)
 
 changeServerConfig() {
-    if [ ! -e "/etc/rc.d/hihy" ] && [ ! -e "/etc/init.d/hihy" ]; then
-        echoColor red "$(i18n change_config_install_first)"
-        return 1
-    fi
-    masquerade_tcp=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "masquerade_tcp" "false")
-    stop
-    killHysteriaProcess TERM
-    cleanupHysteria2Iptables >/dev/null 2>&1 || true
-    if [ "${masquerade_tcp}" == "true" ]; then
-        delHihyFirewallPort tcp
-        delHihyFirewallPort udp
-    else
-        delHihyFirewallPort udp
-    fi
-    # 顺带尝试更新内核;失败(如网络不可达)不阻塞重新配置,继续用现有内核
-    updateHysteriaCore || true
-    setHysteriaConfig
-    # 重新配置时同步刷新服务脚本,让老安装也能拿到服务脚本层面的修复
-    installServiceScript
-    start
-    generate_client_config
+    [ -f "$HIHY_ROOT_DIR/conf/config.yaml" ] || return 1
+    setHysteriaConfig || return 1
+    generate_client_config || return 1
     echoColor green "$(i18n change_config_success)"
-
 }
 
-aclControl() {
-    local acl_file="/etc/hihy/acl/acl.txt"
-    if [ ! -f "${acl_file}" ]; then
-        echoColor red "$(i18n acl_file_not_found)"
-        return 1
-    fi
+aclControl() (
+    local live="$HIHY_ROOT_DIR/acl/acl.txt" dir input domain rule prefix matches count
+    [ -f "$live" ] || return 1
     echoColor purple "$(i18n acl_action_prompt)"
     echoColor yellow "$(i18n acl_choice_add)"
     echoColor yellow "$(i18n acl_choice_delete)"
     echoColor yellow "$(i18n acl_choice_view)"
-    echoColor yellow "$(i18n menu_option_exit)"
     read -r -p "$(i18n menu_prompt_choice)" input
-    case $input in
-        1)
-            echoColor green "$(i18n acl_control_method_title)"
-            echoColor yellow "$(i18n acl_choice_v4_suffix)"
-            echoColor yellow "$(i18n acl_choice_v6_suffix)"
-            echoColor yellow "$(i18n acl_choice_reject_suffix)"
-            read -r -p "$(i18n menu_prompt_choice)" input
-            case $input in
-                1)
-                    read -r -p "$(i18n acl_v4_domain_prompt)" domain
-                    if [ -z "${domain}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "v4_only(suffix:${domain})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "v4_only(suffix:${domain})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                2)
-                    read -r -p "$(i18n acl_v6_domain_prompt)" domain
-                    if [ -z "${domain}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "v6_only(suffix:${domain})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "v6_only(suffix:${domain})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                3)
-                    read -r -p "$(i18n acl_reject_domain_prompt)" rejectInput
-                    if [ -z "${rejectInput}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "reject(suffix:${rejectInput})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "reject(suffix:${rejectInput})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                *)
-                    echoColor red "$(i18n error_input_error)"
-                    return 1
-                    ;;
-            esac
-            ;;
-        2)
-            read -r -p "$(i18n acl_delete_rule_prompt)" domain
-            if [ -z "${domain}" ]; then
-                echoColor red "$(i18n domain_cannot_be_empty)"
-                return 1
-            fi
-            if grep -qF "${domain}" "${acl_file}"; then
-                # 字面量匹配重写文件,用户输入不再被当作 sed 正则解释
-                grep -vF "${domain}" "${acl_file}" >"${acl_file}.tmp" || true
-                mv "${acl_file}.tmp" "${acl_file}"
-                echoColor green "$(i18n delete_success)"
-                restart
-            else
-                echoColor red "$(i18n acl_rule_not_exists)"
-            fi
-
-            ;;
-        3)
-            echoColor purple "$(i18n acl_current_list)"
-            cat "${acl_file}"
-            ;;
-        0) return 0 ;;
-        *)
-            echoColor red "$(i18n error_input_error)"
-            return 1
-            ;;
-    esac
-
-}
-
-addSocks5Outbound() {
-    if [ ! -f "/etc/hihy/conf/config.yaml" ]; then
-        echoColor red "$(i18n config_file_not_found)"
-        return 1
+    case "$input" in 0) return 0 ;; 3) cat "$live"; return 0 ;; 1|2) ;; *) return 1 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    cp -- "$live" "$dir/acl.txt" && cp -- "$HIHY_ROOT_DIR/conf/config.yaml" "$dir/config.yaml" || return 1
+    if [ "$input" = 1 ]; then
+        echoColor yellow "$(i18n acl_choice_v4_suffix)"
+        echoColor yellow "$(i18n acl_choice_v6_suffix)"
+        echoColor yellow "$(i18n acl_choice_reject_suffix)"
+        read -r input
+        case "$input" in 1) prefix=v4_only ;; 2) prefix=v6_only ;; 3) prefix=reject ;; *) return 1 ;; esac
+        read -r -p "$(i18n acl_v4_domain_prompt)" domain
+        domain="${domain,,}"
+        isValidDomain "$domain" || return 1
+        rule="$prefix(suffix:$domain)"
+        grep -Fxq -- "$rule" "$live" && return 0
+        printf '%s\n' "$rule" >>"$dir/acl.txt"
+    else
+        read -r -p "$(i18n acl_delete_rule_prompt)" domain
+        if isValidDomain "$domain"; then
+            matches=""; count=0
+            for prefix in v4_only v6_only reject; do
+                rule="$prefix(suffix:${domain,,})"
+                if grep -Fxq -- "$rule" "$live"; then matches="$rule"; count=$((count+1)); fi
+            done
+            [ "$count" = 1 ] || { securityError 'Enter the complete rule when a domain has zero or multiple matches.'; return 1; }
+            rule="$matches"
+        else
+            rule="$domain"
+            [[ "$rule" != *$'\n'* ]] && grep -Fxq -- "$rule" "$live" || return 1
+        fi
+        grep -Fxv -- "$rule" "$live" >"$dir/acl.txt" || [ $? -eq 1 ] || return 1
     fi
-    local server_config="/etc/hihy/conf/config.yaml"
-    local backup_config="/etc/hihy/conf/backup.yaml"
-    echo -e "$(i18n socks5_warp_tip)"
+    commitServerEdit "$dir/config.yaml" "$dir/acl.txt"
+)
+
+addSocks5Outbound() (
+    local config="$HIHY_ROOT_DIR/conf/config.yaml" dir choice addr user pass port name status=true
+    [ -f "$config" ] || return 1
     echoColor yellow "$(i18n socks5_warp_choice)"
     echoColor yellow "$(i18n socks5_custom_choice)"
     echoColor yellow "$(i18n socks5_remove_choice)"
-    echoColor yellow "$(i18n menu_option_exit)"
-    read -r -p "$(i18n menu_prompt_choice)" num
-    if [ -z "${num}" ] || [ "${num}" == "1" ]; then
-        socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-        if [ "${socks5_status}" == "true" ]; then
-            echoColor red "$(i18n socks5_already_enabled)"
-            return 1
-        fi
-        local conf_file="/etc/wireguard/proxy.conf"
-        if [ -f "$conf_file" ]; then
-            echoColor green "$(i18n socks5_warp_config_found)"
-        else
-            wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh w
-        fi
-
-        if [ ! -f "$conf_file" ]; then
-            echoColor red "$(i18n socks5_warp_config_not_found)"
-            return 1
-        fi
-        local port=$(grep "BindAddress" "$conf_file" | grep -v "^#" | awk -F':' '{print $2}')
-        echoColor purple "$(i18n socks5_local_warp_port "$(echoColor red "${port}")")"
-
-        # 在数组开头插入新的outbound配置
-        yq eval '.outbounds = [{"name": "warp", "type": "socks5", "socks5": {"addr": "127.0.0.1:'$port'"}}] + .outbounds' -i "${server_config}"
-
-        restart
-        addOrUpdateYaml "${backup_config}" "socks5_status" "true"
-        echoColor green "$(i18n socks5_add_warp_success)"
-
-    elif [ "${num}" == "2" ]; then
-        socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-        if [ "${socks5_status}" == "true" ]; then
-            echoColor red "$(i18n socks5_already_enabled)"
-            return 1
-        fi
-        read -r -p "$(i18n socks5_addr_prompt)" socks5_addr
-        if [ -z "${socks5_addr}" ]; then
-            echoColor red "$(i18n addr_cannot_be_empty)"
-            return 1
-        fi
-        read -r -p "$(i18n socks5_user_prompt)" socks5_user
-        if [ -n "${socks5_user}" ]; then
-            read -r -p "$(i18n socks5_pass_prompt)" socks5_pass
-            if [ -z "${socks5_pass}" ]; then
-                echoColor red "$(i18n password_cannot_be_empty)"
-                return 1
-            fi
-        fi
-        local server_config="/etc/hihy/conf/config.yaml"
-        if [ -n "${socks5_user}" ]; then
-            yq eval '.outbounds = [{"name": "custom", "type": "socks5", "socks5": {"addr": "'$socks5_addr'", "username": "'$socks5_user'", "password": "'$socks5_pass'"}}] + .outbounds' -i "${server_config}"
-        else
-            yq eval '.outbounds = [{"name": "custom", "type": "socks5", "socks5": {"addr": "'$socks5_addr'"}}] + .outbounds' -i "${server_config}"
-
-        fi
-        restart
-        addOrUpdateYaml "${backup_config}" "socks5_status" "true"
-        echoColor green "$(i18n socks5_add_custom_success)"
-    elif [ "${num}" == "3" ]; then
-        # 删除outbounds相关配置
-        outbound_name=$(getYamlValue "${server_config}" "outbounds[0].name")
-        if [ "${outbound_name}" == "warp" ] || [ "${outbound_name}" == "custom" ]; then
-            yq eval 'del(.outbounds[0])' -i "${server_config}"
-            if [ "${outbound_name}" == "warp" ]; then
-                warp u
-            fi
-            restart
-            addOrUpdateYaml "${backup_config}" "socks5_status" "false"
-            echoColor green "$(i18n uninstall_success)"
-        else
-            echoColor red "$(i18n socks5_outbound_not_found)"
-        fi
-
+    read -r -p "$(i18n menu_prompt_choice)" choice
+    case "$choice" in 1|2|3) ;; *) return 0 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    if [ "$choice" = 3 ]; then
+        name=$(getYamlValue "$config" outbounds[0].name) || return 1
+        [[ "$name" = warp || "$name" = custom ]] || return 1
+        yq 'del(.outbounds[0])' "$config" >"$dir/config.yaml" || return 1
+        status=false
     else
-        echoColor red "$(i18n error_input_error)"
-        return 1
+        [ "$(getBackupValueOrDefault "$HIHY_ROOT_DIR/conf/backup.yaml" socks5_status false)" != true ] || return 1
+        if [ "$choice" = 1 ]; then
+            [ -f /etc/wireguard/proxy.conf ] || installWarpVerified w || return 1
+            [ -f /etc/wireguard/proxy.conf ] || return 1
+            port=$(awk -F: '/^[[:space:]]*BindAddress[[:space:]]*=/ {gsub(/[[:space:]]/, "", $NF); print $NF}' /etc/wireguard/proxy.conf)
+            isValidPort "$port" || return 1
+            name=warp; addr="127.0.0.1:$port"; user=""; pass=""
+        else
+            name=custom
+            read -r -p "$(i18n socks5_addr_prompt)" addr
+            [[ "$addr" =~ ^(\[[A-Za-z0-9:.%]+\]|[A-Za-z0-9.-]+):[0-9]+$ ]] && isValidPort "${addr##*:}" || return 1
+            read -r -p "$(i18n socks5_user_prompt)" user
+            pass=""
+            if [ -n "$user" ]; then read -rs -p "$(i18n socks5_pass_prompt)" pass; printf '\n'; [ -n "$pass" ] || return 1; fi
+        fi
+        addOrUpdateYaml "$dir/outbound.yaml" name "$name" string || return 1
+        addOrUpdateYaml "$dir/outbound.yaml" type socks5 string || return 1
+        addOrUpdateYaml "$dir/outbound.yaml" socks5.addr "$addr" string || return 1
+        if [ -n "$user" ]; then
+            addOrUpdateYaml "$dir/outbound.yaml" socks5.username "$user" string || return 1
+            addOrUpdateYaml "$dir/outbound.yaml" socks5.password "$pass" string || return 1
+        fi
+        HIHY_OUTBOUND_FILE="$dir/outbound.yaml" yq '.outbounds = [load(strenv(HIHY_OUTBOUND_FILE))] + .outbounds' "$config" >"$dir/config.yaml" || return 1
     fi
-
-}
-
+    commitServerEdit "$dir/config.yaml" '' "$status" || return 1
+    printf '%s\n' 'SOCKS5 configuration updated.'
+)
 
 # ----- 90-main.sh -----
 menu() {
@@ -5089,6 +4676,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     loadPersistedLanguage
     checkRoot
     case "${1:-}" in
+        firewallRestore|cronTask) ;;
+        *)
+            exec 9>/run/hihy.operation.lock
+            flock -n 9 || { securityError "Another hihy operation is running."; exit 1; }
+            ;;
+    esac
+    case "${1:-}" in
         install | 1)
             echoColor purple "$(i18n cmd_title_install)"
             install
@@ -5119,7 +4713,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             ;;
         updateHysteriaCore | 7)
             echoColor purple "$(i18n cmd_title_update_core)"
-            updateHysteriaCore
+            updateHysteriaCore "${2:-}"
             ;;
         generate_client_config | 8)
             echoColor purple "$(i18n cmd_title_view_config)"
@@ -5153,6 +4747,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             echoColor purple "$(i18n cmd_title_socks5)"
             addSocks5Outbound
             ;;
+        firewallRestore) firewallRestore ;;
         cronTask) cronTask ;;
         *) menu ;;
     esac

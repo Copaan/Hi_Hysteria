@@ -1,300 +1,115 @@
 #!/bin/bash
 hihyUpdate() {
-    local localV=${hihyV}
-    local remoteV
-    remoteV=$(getLatestHihyVersion || true)
-    if [ -z "$remoteV" ]; then
-        echoColor red "$(i18n network_error_cannot_connect_github)"
-        return 1
-    fi
-    if [ "${localV}" = "${remoteV}" ]; then
-        echoColor green "$(i18n already_latest_version)"
-        # 清除版本检查缓存，防止因缓存过期而显示过时的"有新版本"通知
-        rm -f "$HIHY_VERSION_STATUS_FILE"
-        return 0
-    fi
-
-    # 先下载校验、再原子替换,统一走 installHihyScriptFromRemote。旧逻辑先 rm 再原地
-    # wget:下载失败会毁掉 hihy 命令,且对正在执行的脚本原地写入可能让 bash 读到损坏内容。
-    if ! installHihyScriptFromRemote "$HIHY_BIN_LINK"; then
-        echoColor red "$(i18n hihy_cmd_install_fail)"
-        return 1
-    fi
-    echoColor green "$(i18n hihy_update_complete)"
-    # 清除版本检查缓存，确保下次运行时重新检查并显示正确状态
-    rm -f "$HIHY_VERSION_STATUS_FILE"
+    printf '%s\n' 'Use a reviewed local installation package to update hihy. Remote self-update is disabled.'
 }
 
-changeIp64() {
-    local socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-    local config_file="/etc/hihy/conf/config.yaml"
-    if [ "${socks5_status}" == "true" ]; then
-        echoColor red "$(i18n ip_priority_socks5_active_error)"
-        return 1
-    fi
-    if [ ! -f "${config_file}" ]; then
-        echoColor red "$(i18n config_file_not_found)"
-        return 1
-    fi
-    mode_now=$(getYamlValue "$config_file" "outbounds[0].direct.mode")
-
-    echoColor purple "$(i18n ip_priority_current_mode "$(echoColor red "${mode_now}")")"
+changeIp64() (
+    local config="$HIHY_ROOT_DIR/conf/config.yaml" dir input mode
+    [ -f "$config" ] || return 1
+    [ "$(getBackupValueOrDefault "$HIHY_ROOT_DIR/conf/backup.yaml" socks5_status false)" != true ] || return 1
     echoColor yellow "$(i18n ip_priority_choice_ipv4)"
     echoColor yellow "$(i18n ip_priority_choice_ipv6)"
     echoColor yellow "$(i18n ip_priority_choice_auto)"
-    echoColor yellow "$(i18n prompt_exit)"
     read -r -p "$(i18n prompt_choose)" input
-    case $input in
-        1)
-            if [ "${mode_now}" == "46" ]; then
-                echoColor yellow "$(i18n ip_priority_already_ipv4)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "46"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-
-            ;;
-        2)
-            if [ "${mode_now}" == "64" ]; then
-                echoColor yellow "$(i18n ip_priority_already_ipv6)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "64"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-
-            ;;
-
-        3)
-            if [ "${mode_now}" == "auto" ]; then
-                echoColor yellow "$(i18n ip_priority_already_auto)"
-            else
-                addOrUpdateYaml "$config_file" "outbounds[0].direct.mode" "auto"
-                restart
-                echoColor green "$(i18n switch_success)"
-            fi
-            ;;
-        0) return 0 ;;
-        *)
-            echoColor red "$(i18n error_input_error)"
-            return 1
-            ;;
-    esac
-}
+    case "$input" in 1) mode=46 ;; 2) mode=64 ;; 3) mode=auto ;; 0) return 0 ;; *) return 1 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    cp -- "$config" "$dir/config.yaml" || return 1
+    addOrUpdateYaml "$dir/config.yaml" outbounds[0].direct.mode "$mode" string || return 1
+    commitServerEdit "$dir/config.yaml" || return 1
+    echoColor green "$(i18n switch_success)"
+)
 
 changeServerConfig() {
-    if [ ! -e "/etc/rc.d/hihy" ] && [ ! -e "/etc/init.d/hihy" ]; then
-        echoColor red "$(i18n change_config_install_first)"
-        return 1
-    fi
-    masquerade_tcp=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "masquerade_tcp" "false")
-    stop
-    killHysteriaProcess TERM
-    cleanupHysteria2Iptables >/dev/null 2>&1 || true
-    if [ "${masquerade_tcp}" == "true" ]; then
-        delHihyFirewallPort tcp
-        delHihyFirewallPort udp
-    else
-        delHihyFirewallPort udp
-    fi
-    # 顺带尝试更新内核;失败(如网络不可达)不阻塞重新配置,继续用现有内核
-    updateHysteriaCore || true
-    setHysteriaConfig
-    # 重新配置时同步刷新服务脚本,让老安装也能拿到服务脚本层面的修复
-    installServiceScript
-    start
-    generate_client_config
+    [ -f "$HIHY_ROOT_DIR/conf/config.yaml" ] || return 1
+    setHysteriaConfig || return 1
+    generate_client_config || return 1
     echoColor green "$(i18n change_config_success)"
-
 }
 
-aclControl() {
-    local acl_file="/etc/hihy/acl/acl.txt"
-    if [ ! -f "${acl_file}" ]; then
-        echoColor red "$(i18n acl_file_not_found)"
-        return 1
-    fi
+aclControl() (
+    local live="$HIHY_ROOT_DIR/acl/acl.txt" dir input domain rule prefix matches count
+    [ -f "$live" ] || return 1
     echoColor purple "$(i18n acl_action_prompt)"
     echoColor yellow "$(i18n acl_choice_add)"
     echoColor yellow "$(i18n acl_choice_delete)"
     echoColor yellow "$(i18n acl_choice_view)"
-    echoColor yellow "$(i18n menu_option_exit)"
     read -r -p "$(i18n menu_prompt_choice)" input
-    case $input in
-        1)
-            echoColor green "$(i18n acl_control_method_title)"
-            echoColor yellow "$(i18n acl_choice_v4_suffix)"
-            echoColor yellow "$(i18n acl_choice_v6_suffix)"
-            echoColor yellow "$(i18n acl_choice_reject_suffix)"
-            read -r -p "$(i18n menu_prompt_choice)" input
-            case $input in
-                1)
-                    read -r -p "$(i18n acl_v4_domain_prompt)" domain
-                    if [ -z "${domain}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "v4_only(suffix:${domain})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "v4_only(suffix:${domain})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                2)
-                    read -r -p "$(i18n acl_v6_domain_prompt)" domain
-                    if [ -z "${domain}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "v6_only(suffix:${domain})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "v6_only(suffix:${domain})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                3)
-                    read -r -p "$(i18n acl_reject_domain_prompt)" rejectInput
-                    if [ -z "${rejectInput}" ]; then
-                        echoColor red "$(i18n domain_cannot_be_empty)"
-                        return 1
-                    fi
-                    if grep -q "reject(suffix:${rejectInput})" "${acl_file}"; then
-                        echoColor red "$(i18n acl_rule_exists)"
-                    else
-                        echo "reject(suffix:${rejectInput})" >>"${acl_file}"
-                        echoColor green "$(i18n add_success)"
-                        restart
-                    fi
-                    ;;
-                *)
-                    echoColor red "$(i18n error_input_error)"
-                    return 1
-                    ;;
-            esac
-            ;;
-        2)
-            read -r -p "$(i18n acl_delete_rule_prompt)" domain
-            if [ -z "${domain}" ]; then
-                echoColor red "$(i18n domain_cannot_be_empty)"
-                return 1
-            fi
-            if grep -qF "${domain}" "${acl_file}"; then
-                # 字面量匹配重写文件,用户输入不再被当作 sed 正则解释
-                grep -vF "${domain}" "${acl_file}" >"${acl_file}.tmp" || true
-                mv "${acl_file}.tmp" "${acl_file}"
-                echoColor green "$(i18n delete_success)"
-                restart
-            else
-                echoColor red "$(i18n acl_rule_not_exists)"
-            fi
-
-            ;;
-        3)
-            echoColor purple "$(i18n acl_current_list)"
-            cat "${acl_file}"
-            ;;
-        0) return 0 ;;
-        *)
-            echoColor red "$(i18n error_input_error)"
-            return 1
-            ;;
-    esac
-
-}
-
-addSocks5Outbound() {
-    if [ ! -f "/etc/hihy/conf/config.yaml" ]; then
-        echoColor red "$(i18n config_file_not_found)"
-        return 1
+    case "$input" in 0) return 0 ;; 3) cat "$live"; return 0 ;; 1|2) ;; *) return 1 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    cp -- "$live" "$dir/acl.txt" && cp -- "$HIHY_ROOT_DIR/conf/config.yaml" "$dir/config.yaml" || return 1
+    if [ "$input" = 1 ]; then
+        echoColor yellow "$(i18n acl_choice_v4_suffix)"
+        echoColor yellow "$(i18n acl_choice_v6_suffix)"
+        echoColor yellow "$(i18n acl_choice_reject_suffix)"
+        read -r input
+        case "$input" in 1) prefix=v4_only ;; 2) prefix=v6_only ;; 3) prefix=reject ;; *) return 1 ;; esac
+        read -r -p "$(i18n acl_v4_domain_prompt)" domain
+        domain="${domain,,}"
+        isValidDomain "$domain" || return 1
+        rule="$prefix(suffix:$domain)"
+        grep -Fxq -- "$rule" "$live" && return 0
+        printf '%s\n' "$rule" >>"$dir/acl.txt"
+    else
+        read -r -p "$(i18n acl_delete_rule_prompt)" domain
+        if isValidDomain "$domain"; then
+            matches=""; count=0
+            for prefix in v4_only v6_only reject; do
+                rule="$prefix(suffix:${domain,,})"
+                if grep -Fxq -- "$rule" "$live"; then matches="$rule"; count=$((count+1)); fi
+            done
+            [ "$count" = 1 ] || { securityError 'Enter the complete rule when a domain has zero or multiple matches.'; return 1; }
+            rule="$matches"
+        else
+            rule="$domain"
+            [[ "$rule" != *$'\n'* ]] && grep -Fxq -- "$rule" "$live" || return 1
+        fi
+        grep -Fxv -- "$rule" "$live" >"$dir/acl.txt" || [ $? -eq 1 ] || return 1
     fi
-    local server_config="/etc/hihy/conf/config.yaml"
-    local backup_config="/etc/hihy/conf/backup.yaml"
-    echo -e "$(i18n socks5_warp_tip)"
+    commitServerEdit "$dir/config.yaml" "$dir/acl.txt"
+)
+
+addSocks5Outbound() (
+    local config="$HIHY_ROOT_DIR/conf/config.yaml" dir choice addr user pass port name status=true
+    [ -f "$config" ] || return 1
     echoColor yellow "$(i18n socks5_warp_choice)"
     echoColor yellow "$(i18n socks5_custom_choice)"
     echoColor yellow "$(i18n socks5_remove_choice)"
-    echoColor yellow "$(i18n menu_option_exit)"
-    read -r -p "$(i18n menu_prompt_choice)" num
-    if [ -z "${num}" ] || [ "${num}" == "1" ]; then
-        socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-        if [ "${socks5_status}" == "true" ]; then
-            echoColor red "$(i18n socks5_already_enabled)"
-            return 1
-        fi
-        local conf_file="/etc/wireguard/proxy.conf"
-        if [ -f "$conf_file" ]; then
-            echoColor green "$(i18n socks5_warp_config_found)"
-        else
-            wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh w
-        fi
-
-        if [ ! -f "$conf_file" ]; then
-            echoColor red "$(i18n socks5_warp_config_not_found)"
-            return 1
-        fi
-        local port=$(grep "BindAddress" "$conf_file" | grep -v "^#" | awk -F':' '{print $2}')
-        echoColor purple "$(i18n socks5_local_warp_port "$(echoColor red "${port}")")"
-
-        # 在数组开头插入新的outbound配置
-        yq eval '.outbounds = [{"name": "warp", "type": "socks5", "socks5": {"addr": "127.0.0.1:'$port'"}}] + .outbounds' -i "${server_config}"
-
-        restart
-        addOrUpdateYaml "${backup_config}" "socks5_status" "true"
-        echoColor green "$(i18n socks5_add_warp_success)"
-
-    elif [ "${num}" == "2" ]; then
-        socks5_status=$(getBackupValueOrDefault "/etc/hihy/conf/backup.yaml" "socks5_status" "false")
-        if [ "${socks5_status}" == "true" ]; then
-            echoColor red "$(i18n socks5_already_enabled)"
-            return 1
-        fi
-        read -r -p "$(i18n socks5_addr_prompt)" socks5_addr
-        if [ -z "${socks5_addr}" ]; then
-            echoColor red "$(i18n addr_cannot_be_empty)"
-            return 1
-        fi
-        read -r -p "$(i18n socks5_user_prompt)" socks5_user
-        if [ -n "${socks5_user}" ]; then
-            read -r -p "$(i18n socks5_pass_prompt)" socks5_pass
-            if [ -z "${socks5_pass}" ]; then
-                echoColor red "$(i18n password_cannot_be_empty)"
-                return 1
-            fi
-        fi
-        local server_config="/etc/hihy/conf/config.yaml"
-        if [ -n "${socks5_user}" ]; then
-            yq eval '.outbounds = [{"name": "custom", "type": "socks5", "socks5": {"addr": "'$socks5_addr'", "username": "'$socks5_user'", "password": "'$socks5_pass'"}}] + .outbounds' -i "${server_config}"
-        else
-            yq eval '.outbounds = [{"name": "custom", "type": "socks5", "socks5": {"addr": "'$socks5_addr'"}}] + .outbounds' -i "${server_config}"
-
-        fi
-        restart
-        addOrUpdateYaml "${backup_config}" "socks5_status" "true"
-        echoColor green "$(i18n socks5_add_custom_success)"
-    elif [ "${num}" == "3" ]; then
-        # 删除outbounds相关配置
-        outbound_name=$(getYamlValue "${server_config}" "outbounds[0].name")
-        if [ "${outbound_name}" == "warp" ] || [ "${outbound_name}" == "custom" ]; then
-            yq eval 'del(.outbounds[0])' -i "${server_config}"
-            if [ "${outbound_name}" == "warp" ]; then
-                warp u
-            fi
-            restart
-            addOrUpdateYaml "${backup_config}" "socks5_status" "false"
-            echoColor green "$(i18n uninstall_success)"
-        else
-            echoColor red "$(i18n socks5_outbound_not_found)"
-        fi
-
+    read -r -p "$(i18n menu_prompt_choice)" choice
+    case "$choice" in 1|2|3) ;; *) return 0 ;; esac
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    if [ "$choice" = 3 ]; then
+        name=$(getYamlValue "$config" outbounds[0].name) || return 1
+        [[ "$name" = warp || "$name" = custom ]] || return 1
+        yq 'del(.outbounds[0])' "$config" >"$dir/config.yaml" || return 1
+        status=false
     else
-        echoColor red "$(i18n error_input_error)"
-        return 1
+        [ "$(getBackupValueOrDefault "$HIHY_ROOT_DIR/conf/backup.yaml" socks5_status false)" != true ] || return 1
+        if [ "$choice" = 1 ]; then
+            [ -f /etc/wireguard/proxy.conf ] || installWarpVerified w || return 1
+            [ -f /etc/wireguard/proxy.conf ] || return 1
+            port=$(awk -F: '/^[[:space:]]*BindAddress[[:space:]]*=/ {gsub(/[[:space:]]/, "", $NF); print $NF}' /etc/wireguard/proxy.conf)
+            isValidPort "$port" || return 1
+            name=warp; addr="127.0.0.1:$port"; user=""; pass=""
+        else
+            name=custom
+            read -r -p "$(i18n socks5_addr_prompt)" addr
+            [[ "$addr" =~ ^(\[[A-Za-z0-9:.%]+\]|[A-Za-z0-9.-]+):[0-9]+$ ]] && isValidPort "${addr##*:}" || return 1
+            read -r -p "$(i18n socks5_user_prompt)" user
+            pass=""
+            if [ -n "$user" ]; then read -rs -p "$(i18n socks5_pass_prompt)" pass; printf '\n'; [ -n "$pass" ] || return 1; fi
+        fi
+        addOrUpdateYaml "$dir/outbound.yaml" name "$name" string || return 1
+        addOrUpdateYaml "$dir/outbound.yaml" type socks5 string || return 1
+        addOrUpdateYaml "$dir/outbound.yaml" socks5.addr "$addr" string || return 1
+        if [ -n "$user" ]; then
+            addOrUpdateYaml "$dir/outbound.yaml" socks5.username "$user" string || return 1
+            addOrUpdateYaml "$dir/outbound.yaml" socks5.password "$pass" string || return 1
+        fi
+        HIHY_OUTBOUND_FILE="$dir/outbound.yaml" yq '.outbounds = [load(strenv(HIHY_OUTBOUND_FILE))] + .outbounds' "$config" >"$dir/config.yaml" || return 1
     fi
-
-}
-
+    commitServerEdit "$dir/config.yaml" '' "$status" || return 1
+    printf '%s\n' 'SOCKS5 configuration updated.'
+)

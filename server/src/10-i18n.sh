@@ -3,7 +3,7 @@ loadPersistedLanguage() {
     if [ -f "$HIHY_I18N_CONF" ] && [ -z "$HIHY_LANG" ]; then
         HIHY_LANG=$(grep -E '^HIHY_LANG=' "$HIHY_I18N_CONF" | tail -n 1 | cut -d'=' -f2-)
     fi
-    HIHY_LANG="${HIHY_LANG:-en}"
+    case "${HIHY_LANG:-en}" in en|zh|fa|ru) HIHY_LANG="${HIHY_LANG:-en}" ;; *) HIHY_LANG=en ;; esac
 }
 
 savePersistedLanguage() {
@@ -24,19 +24,6 @@ getI18nSchemaVersion() {
     line="${line%%,*}"
     line="${line#*: }"
     printf '%s' "$line"
-}
-
-refreshI18nFile() {
-    local lang="$1"
-    local base_url="https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main"
-    mkdir -p "$HIHY_I18N_DIR"
-    local url="${base_url}/server/i18n/${lang}.json"
-    local out="${HIHY_I18N_DIR}/hy2.sh.${lang}.json"
-    if command -v wget >/dev/null 2>&1; then
-        wget -q --no-check-certificate -O "$out" "$url" 2>/dev/null
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$out" "$url" 2>/dev/null
-    fi
 }
 
 # 按 key 读取 JSON 字符串；返回空表示未找到
@@ -65,9 +52,7 @@ i18nLookup() {
         local schema
         schema=$(getI18nSchemaVersion "$lang_file")
         if [ "$schema" != "$HIHY_I18N_SCHEMA" ]; then
-            # 异步静默更新语言文件
-            (refreshI18nFile "$HIHY_LANG") >/dev/null 2>&1 &
-            # 本次直接使用英文
+            # 不匹配的语言包只回退到本地英文。
             value=$(i18nValueFromFile "$en_file" "$key")
             [ -n "$value" ] && printf '%s' "$value" && return 0
             printf '%s' "$key"

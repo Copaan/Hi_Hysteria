@@ -36,33 +36,8 @@ detectVirtualization() {
     echo "$virt_type"
 }
 
-# 获取启动命令前缀（是否使用 chrt）
-getStartCommand() {
-    local virt_type=$(detectVirtualization)
-    local command_prefix=""
-
-    case "$virt_type" in
-        "openvz" | "lxc" | "docker")
-            # OpenVZ、LXC 和 Docker 容器中不使用 chrt
-            command_prefix=""
-            ;;
-        *)
-            # 其他环境检查是否支持 chrt
-            if command -v chrt >/dev/null 2>&1; then
-                # 测试 chrt 是否可用
-                if chrt -r 1 echo "test" >/dev/null 2>&1; then
-                    command_prefix="chrt -r 99"
-                else
-                    command_prefix=""
-                fi
-            else
-                command_prefix=""
-            fi
-            ;;
-    esac
-
-    echo "$command_prefix"
-}
+# 获取普通调度策略下的启动命令前缀
+getStartCommand() { printf '%s' ''; }
 
 cronTask() {
     if [ -f "/etc/hihy/logs/hihy.log" ]; then
@@ -104,7 +79,7 @@ checkSystemForUpdate() {
     local installType=""
     local updateNeeded=false
     local packageManager=""
-    local requiredPackages=("wget" "curl" "lsof" "bash" "iptables" "bc")
+    local requiredPackages=("wget" "curl" "lsof" "bash" "iptables" "bc" "openssl")
 
     # 检测包管理器
     if command -v apt >/dev/null; then
@@ -114,11 +89,11 @@ checkSystemForUpdate() {
     elif command -v yum >/dev/null; then
         packageManager="yum"
         installType="yum -y -q install"
-        upgrade="yum update -y --skip-broken"
+        upgrade="yum makecache"
     elif command -v dnf >/dev/null; then
         packageManager="dnf"
         installType="dnf -y install"
-        upgrade="dnf update -y"
+        upgrade="dnf makecache"
     elif command -v pacman >/dev/null; then
         packageManager="pacman"
         installType="pacman -Sy --noconfirm"
@@ -160,86 +135,77 @@ checkSystemForUpdate() {
         updateNeeded=true
     fi
 
-    # 检查 chrt 命令
-    if ! command -v chrt >/dev/null; then
+    # 检查 flock 命令
+    if ! command -v flock >/dev/null; then
         echoColor green "*util-linux"
+        updateNeeded=true
+    fi
+
+    if [ ! -s /etc/ssl/certs/ca-certificates.crt ] || ! command -v pgrep >/dev/null 2>&1; then
         updateNeeded=true
     fi
 
     # 仅在需要安装包时更新软件源
     if [ "$updateNeeded" = true ]; then
         echoColor purple "\n$(i18n package_manager_update_sources)"
-        ${upgrade}
+        ${upgrade} || return 1
+
+        ${installType} ca-certificates || return 1
 
         # 安装必需的包
         for package in "${requiredPackages[@]}"; do
             if ! command -v "$package" >/dev/null; then
-                ${installType} "$package"
+                ${installType} "$package" || return 1
             fi
         done
 
         # 安装 dig
         if ! command -v dig >/dev/null; then
             case $packageManager in
-                "apt") ${installType} "dnsutils" ;;
-                "yum" | "dnf") ${installType} "bind-utils" ;;
-                "pacman") ${installType} "bind-tools" ;;
-                "apk") ${installType} "bind-tools" ;;
+                "apt") ${installType} "dnsutils" || return 1 ;;
+                "yum" | "dnf") ${installType} "bind-utils" || return 1 ;;
+                "pacman") ${installType} "bind-tools" || return 1 ;;
+                "apk") ${installType} "bind-tools" || return 1 ;;
             esac
         fi
 
         # 安装 qrencode
         if ! command -v qrencode >/dev/null; then
             case $packageManager in
-                "apt") ${installType} "qrencode" ;;
-                "yum" | "dnf") ${installType} "qrencode" ;;
-                "pacman") ${installType} "qrencode" ;;
-                "apk") ${installType} "libqrencode-tools" ;;
+                "apt") ${installType} "qrencode" || return 1 ;;
+                "yum" | "dnf") ${installType} "qrencode" || return 1 ;;
+                "pacman") ${installType} "qrencode" || return 1 ;;
+                "apk") ${installType} "libqrencode-tools" || return 1 ;;
             esac
         fi
 
         # 安装 util-linux
-        if ! command -v chrt >/dev/null; then
-            ${installType} "util-linux"
+        if ! command -v flock >/dev/null; then
+            ${installType} "util-linux" || return 1
         fi
 
-        # 确保有 pkill 命令
-        if ! command -v pkill >/dev/null 2>&1; then
+        # 确保有 pgrep 命令
+        if ! command -v pgrep >/dev/null 2>&1; then
             case $packageManager in
-                "apt") ${installType} "procps" ;;
-                "yum" | "dnf") ${installType} "procps" ;;
-                "pacman") ${installType} "procps" ;;
-                "apk") ${installType} "procps" ;;
+                "apt") ${installType} "procps" || return 1 ;;
+                "yum" | "dnf") ${installType} "procps" || return 1 ;;
+                "pacman") ${installType} "procps" || return 1 ;;
+                "apk") ${installType} "procps" || return 1 ;;
             esac
         fi
 
         # 确保有 crontab 命令
         if ! command -v crontab >/dev/null 2>&1; then
             case $packageManager in
-                "apt") ${installType} "cron" ;;
-                "yum" | "dnf") ${installType} "cron" ;;
-                "pacman") ${installType} "cronie" ;;
-                "apk") ${installType} "cronie" ;;
+                "apt") ${installType} "cron" || return 1 ;;
+                "yum" | "dnf") ${installType} "cron" || return 1 ;;
+                "pacman") ${installType} "cronie" || return 1 ;;
+                "apk") ${installType} "cronie" || return 1 ;;
             esac
         fi
 
         echoColor purple "\n$(i18n package_install_complete)"
     fi
 
-    # 检查 yq 命令
-    # 安装 yq
-    if ! command -v yq >/dev/null; then
-        arch=$(getArchitecture)
-        echoColor purple "$(i18n downloading_yq ${arch})..."
-        if ! downloadToFile "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${arch}" "$HIHY_YQ_BIN"; then
-            if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
-                echoColor red "$(i18n download_yq_failed_no_tool)"
-            else
-                echoColor red "$(i18n download_yq_failed_network)"
-            fi
-            exit 1
-        fi
-        chmod +x "$HIHY_YQ_BIN"
-    fi
+    installPrivateYq || return 1
 }
-

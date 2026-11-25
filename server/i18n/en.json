@@ -123,11 +123,11 @@
   "client_mihomo_gecko_skip": "Note: mihomo does not support gecko obfuscation; use the native config or sing-box instead. Skipping mihomo config.",
   "client_mihomo_mimic_skip": "Note: mihomo does not support mimic; use the native Hysteria client on Linux. Skipping mihomo config.",
   "client_only_block_http3_tip": "Tip: It is recommended to enable blocking QUIC/HTTP3/UDP 443 on the client for a better experience.",
-  "client_singbox_bbr_profile_note": "Note: sing-box only accepts bbr_profile since 1.14 (still beta), so it is omitted; BBR profile '%s' applies to the native client only.",
+  "client_singbox_bbr_profile_note": "BBR profile '%s' requires sing-box 1.14 or newer.",
   "client_singbox_file_hint": "📦 [sing-box / SFA / SFI / SFM / SFT] sing-box config file: %s",
   "client_singbox_mimic_skip": "Note: sing-box does not support mimic; use the native Hysteria client on Linux. Skipping sing-box config.",
-  "client_singbox_realm_beta_warning": "Warning: the sing-box `realm` field requires 1.14+, which has no stable release yet. Stable sing-box will refuse to load this config; use the native Hysteria2 client or a 1.14 beta for Realm mode.",
-  "client_singbox_version_hint": "Note: requires sing-box 1.12+ (realm needs 1.14+, currently beta only).",
+  "client_singbox_realm_beta_warning": "Realm requires sing-box 1.14 or newer. The compatibility baseline is 1.14.4.",
+  "client_singbox_version_hint": "Compatibility baseline: sing-box 1.14.4; Realm, Gecko and BBR profiles require 1.14+.",
   "cloudflare_token_prompt": "Please enter cloudflare_api_token:",
   "cmd_title_acl": "12) ACL management",
   "cmd_title_autoinstall": "One-key install hysteria2 (zero interaction)...",
@@ -280,7 +280,7 @@
   "masquerade_disabled_selected": "Masquerade disabled",
   "masquerade_file_hint": "Default preview: https://hfiprogramming.github.io/mikutap/",
   "masquerade_file_label": "Masquerade website file directory: ",
-  "masquerade_file_prompt": "Please enter masquerade website file directory (default: /etc/hihy/file; mikutap will be auto-downloaded):",
+  "masquerade_file_prompt": "Enter a local website directory (default /etc/hihy/file: downloads the pinned, verified mikutap site):",
   "masquerade_prompt": "(10/13) Masquerade website: disguise the port as a normal HTTPS site. Choose mode:",
   "masquerade_proxy_hint": "Reverse-proxy this site but do not replace domain names inside the page.",
   "masquerade_proxy_label": "Masquerade proxy address: ",
@@ -540,7 +540,7 @@
   "mimic_installed": "mimic %s installed, kernel module loaded (modprobe mimic), enabled at boot",
   "mimic_download_fail": "Failed to download or verify mimic",
   "mimic_extract_fail": "Failed to extract mimic package",
-  "mimic_unsupported_arch": "mimic does not support %s architecture (amd64/arm64 only); mimic skipped",
+  "mimic_unsupported_arch": "Mimic does not support %s architecture (amd64/arm64 only); configuration aborted.",
   "mimic_module_manual_hint": "mimic kernel module could not be compiled automatically (dkms/kernel headers missing?). Install it manually per Getting Started and retry: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md",
-  "mimic_install_fallback": "mimic auto-install failed; fell back to disabled (service unaffected). Run `hihy 9` to re-enable after fixing."
+  "mimic_install_fallback": "Mimic installation failed; configuration was aborted and the existing service was retained."
 }

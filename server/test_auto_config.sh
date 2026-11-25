@@ -152,6 +152,9 @@ load_funcs() { source "$REPO_ROOT/server/hy2.sh"; }
 (
     load_funcs
     tmp=$(mktemp)
+    sleep 15 &
+    HIHY_VALIDATION_PID=$!
+    trap 'kill "$HIHY_VALIDATION_PID" 2>/dev/null || true; rm -f "$tmp"' EXIT
     echo "... server up and running ..." >"$tmp"
     waitForValidationOutcome "$tmp" 3
     [ $? -eq 0 ] && pass "validation: success marker" || fail "validation success marker rc"

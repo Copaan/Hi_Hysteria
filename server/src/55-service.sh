@@ -64,16 +64,27 @@ installServiceScript() {
         mkdir -p /etc/init.d
         cat >/etc/init.d/hihy <<EOF
 #!/sbin/openrc-run
+umask 077
+exec 9>&-
 
 name="hihy"
 description="Hysteria Proxy Service"
 command="${start_cmd_prefix} /etc/hihy/bin/appS"
-command_args="--log-level info -c /etc/hihy/conf/config.yaml server"
+command_args="--disable-update-check --log-level info -c /etc/hihy/conf/config.yaml server"
 pidfile="/var/run/hihy.pid"
 output_log="/etc/hihy/logs/hihy.log"
 error_log="/etc/hihy/logs/hihy.log"
 
 extra_started_commands="log"
+
+is_running() {
+    [ -f "\$1" ] || return 1
+    PID=\$(cat "\$1")
+    case "\$PID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "\$PID" -gt 1 ] || return 1
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) return 1 ;; esac
+    kill -0 "\$PID" 2>/dev/null
+}
 
 depend() {
     need net
@@ -81,17 +92,18 @@ depend() {
 }
 
 start_pre() {
-    checkpath --directory --owner root:root --mode 0755 /etc/hihy/logs
+    checkpath --directory --owner root:root --mode 0700 /etc/hihy/logs
 }
 
 start() {
-    if [ -f "\$pidfile" ] && kill -0 \$(cat "\$pidfile") 2>/dev/null; then
+    if is_running "\$pidfile"; then
         eerror "hihy is already running"
         return 1
     fi
 
     ebegin "Starting hihy"
     mkdir -p \$(dirname "\$output_log")
+    "$HIHY_BIN_LINK" firewallRestore || return 1
     DAEMON_WRAP=""
     if command -v setsid >/dev/null 2>&1; then
         DAEMON_WRAP="setsid"
@@ -114,6 +126,7 @@ stop() {
     fi
 
     PID=\$(cat "\$pidfile")
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) rm -f "\$pidfile"; return 1 ;; esac
     ebegin "Stopping hihy"
     kill "\$PID" 2>/dev/null
     n=0
@@ -137,7 +150,7 @@ restart() {
 }
 
 status() {
-    if [ -f "\$pidfile" ] && kill -0 \$(cat "\$pidfile") 2>/dev/null; then
+    if is_running "\$pidfile"; then
         einfo "hihy is running"
     else
         einfo "hihy is not running"
@@ -155,27 +168,39 @@ EOF
         mkdir -p /etc/rc.d
         cat >/etc/rc.d/hihy <<EOF
 #!/bin/sh
+umask 077
+exec 9>&-
 
 HIHY_PATH="/etc/hihy"
 PID_FILE="/var/run/hihy.pid"
 LOG_FILE="\$HIHY_PATH/logs/hihy.log"
 START_CMD_PREFIX="${start_cmd_prefix}"
 
+is_running() {
+    [ -f "\$1" ] || return 1
+    PID=\$(cat "\$1")
+    case "\$PID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "\$PID" -gt 1 ] || return 1
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) return 1 ;; esac
+    kill -0 "\$PID" 2>/dev/null
+}
+
 start() {
-    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+    if is_running "\$PID_FILE"; then
         echo "hihy is already running"
         return 1
     fi
 
     echo "Starting hihy..."
+    "$HIHY_BIN_LINK" firewallRestore || return 1
     DAEMON_WRAP=""
     if command -v setsid >/dev/null 2>&1; then
         DAEMON_WRAP="setsid"
     fi
     if [ -n "\$START_CMD_PREFIX" ]; then
-        nohup \$DAEMON_WRAP \$START_CMD_PREFIX \$HIHY_PATH/bin/appS --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
+        nohup \$DAEMON_WRAP \$START_CMD_PREFIX \$HIHY_PATH/bin/appS --disable-update-check --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
     else
-        nohup \$DAEMON_WRAP \$HIHY_PATH/bin/appS --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
+        nohup \$DAEMON_WRAP \$HIHY_PATH/bin/appS --disable-update-check --log-level info -c \$HIHY_PATH/conf/config.yaml server > "\$LOG_FILE" 2>&1 &
     fi
     echo \$! > "\$PID_FILE"
     sleep 1
@@ -193,6 +218,7 @@ stop() {
     fi
 
     PID=\$(cat "\$PID_FILE")
+    case "\$(readlink "/proc/\$PID/exe" 2>/dev/null)" in /etc/hihy/bin/appS|"/etc/hihy/bin/appS (deleted)") ;; *) rm -f "\$PID_FILE"; return 1 ;; esac
     echo "Stopping hihy..."
     kill "\$PID" 2>/dev/null
     n=0
@@ -215,7 +241,7 @@ restart() {
 }
 
 status() {
-    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+    if is_running "\$PID_FILE"; then
         echo "hihy is running"
     else
         echo "hihy is not running"
@@ -249,7 +275,7 @@ EOF
         fi
         chmod +x /etc/rc.local 2>/dev/null || true
         if ! grep -q "/etc/rc.d/hihy start" /etc/rc.local; then
-            echo "/etc/rc.d/hihy start" >>/etc/rc.local
+            appendRcLocalCommand "/etc/rc.d/hihy start" || return 1
         fi
     fi
 }
@@ -265,13 +291,8 @@ install() {
     fi
 
     if [ "$install_state" = "partially-installed" ]; then
-        echoColor yellow "$(i18n partial_install_cleanup)"
-        killHysteriaProcess KILL
-        delHihyFirewallPort udp >/dev/null 2>&1 || true
-        delHihyFirewallPort tcp >/dev/null 2>&1 || true
-        cleanupHysteria2Iptables >/dev/null 2>&1 || true
-        recoverPartialInstallState
-        echoColor purple "$(i18n partial_install_recovered)"
+        securityError "Existing incomplete installation; inspect and uninstall explicitly before retrying."
+        return 1
     fi
 
     # 创建必要目录
@@ -286,35 +307,38 @@ install() {
         exit 1
     fi
 
-    checkSystemForUpdate
+    checkSystemForUpdate || return 1
     if ! downloadHysteriaCore; then
         markInstallFailed "core-download" "failed to download hysteria core"
         exit 1
     fi
     if [ "$mode" = "auto" ]; then
-        autoHysteriaConfig
+        autoHysteriaConfig || return 1
     else
-        setHysteriaConfig
+        setHysteriaConfig || return 1
     fi
 
     # 写入服务脚本并启动(独立函数,重新配置时也会刷新服务脚本)
-    installServiceScript
+    installServiceScript || return 1
     if [ -f "/etc/alpine-release" ]; then
-        rc-service hihy start
+        rc-service hihy start || return 1
     else
-        /etc/rc.d/hihy start
+        /etc/rc.d/hihy start || return 1
     fi
 
-    # 添加定时任务(先去重,避免重装时重复堆积)
-    crontab -l >./crontab.tmp 2>/dev/null || touch ./crontab.tmp
-    if ! grep -q "hihy cronTask" ./crontab.tmp; then
-        echo "15 4 * * 1 hihy cronTask" >>./crontab.tmp
-        crontab ./crontab.tmp
+    local cron_tmp
+    cron_tmp=$(mktemp) || return 1
+    crontab -l >"$cron_tmp" 2>/dev/null || true
+    if ! grep -Fq "hihy cronTask" "$cron_tmp"; then
+        printf '15 4 * * 1 %s cronTask\n' "$HIHY_BIN_LINK" >>"$cron_tmp"
+        crontab "$cron_tmp" || { rm -f "$cron_tmp"; return 1; }
     fi
-    rm -f ./crontab.tmp
+    rm -f -- "$cron_tmp"
+    secureInstallPermissions || return 1
     setup_rc_local_for_arch
 
-    generate_client_config
+    clearInstallFailureMarker
+    generate_client_config || return 1
     echoColor yellowBlack "$(i18n install_done)"
 }
 
@@ -343,9 +367,11 @@ start() {
             echoColor green "$(i18n service_start_success)"
         else
             echoColor red "$(i18n service_start_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 stop() {
@@ -359,9 +385,11 @@ stop() {
             echoColor green "$(i18n service_stop_success)"
         else
             echoColor red "$(i18n service_stop_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 restart() {
@@ -375,9 +403,11 @@ restart() {
             echoColor green "$(i18n service_restart_success)"
         else
             echoColor red "$(i18n service_restart_failure)"
+            return 1
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 checkStatus() {
@@ -401,6 +431,7 @@ checkStatus() {
         fi
     else
         echoColor red "$(i18n service_script_not_found)"
+        return 1
     fi
 }
 

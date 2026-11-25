@@ -4,7 +4,7 @@
 #
 # 产物行号约定:
 #   line 1: shebang
-#   line 2: hihyV="ver1.XX"  (getLatestHihyVersion 依赖此位置,不可移位)
+#   line 2: hihyV="ver1.XX"  (保留分发文件的版本标记)
 #   line 3+: GENERATED header + 其余模块
 set -euo pipefail
 
@@ -30,7 +30,7 @@ for m in "${modules[@]}"; do
     if [ "$first" -eq 1 ]; then
         # line 1: shebang
         head -n 1 "$m" >"$TMP"
-        # line 2: hihyV (getLatestHihyVersion 依赖 sed -n '2p')
+        # line 2: hihyV (version marker)
         grep '^hihyV=' "$m" | head -n 1 >>"$TMP"
         # line 3+: GENERATED header
         cat >>"$TMP" <<'GEN'
@@ -62,6 +62,11 @@ if command -v shellcheck >/dev/null 2>&1; then
     if shellcheck -S error "$OUT"; then
         echo "shellcheck: no errors"
     else
-        echo "shellcheck: errors above (review)" >&2
+        echo "shellcheck: errors above" >&2
+        exit 1
     fi
+fi
+
+if [ "$OUT" = "$REPO_ROOT/server/hy2.sh" ]; then
+    (cd "$REPO_ROOT/server" && sha256sum install.sh hy2.sh i18n/*.json | tr -d '\r' | sed 's/ \*/  /' >SHA256SUMS)
 fi

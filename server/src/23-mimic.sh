@@ -6,14 +6,13 @@
 # 策略:
 #   1. Debian/Ubuntu(有 apt-get):apt 整装,自动拉 dkms/linux-headers 依赖并触发 DKMS 编译
 #   2. 其他发行版:解包 .deb 提取静态二进制;有 dkms 命令则手动 add/build/install 编译模块
-#   3. 模块最终必须 modprobe 成功;任一步失败 -> 返回非零,调用方回退关闭 mimic
+#   3. 模块最终必须 modprobe 成功;任一步失败 -> 返回非零,终止本次配置
 # 装好后 hysteria 会自动启动并管理 mimic,无需 systemd 服务或手动配置文件。
 HIHY_MIMIC_BIN_DIR="${HIHY_MIMIC_BIN_DIR:-/usr/sbin}"
 HIHY_DKMS_SRC_DIR="${HIHY_DKMS_SRC_DIR:-/usr/src}"
 MIMIC_RELEASE_URL="${MIMIC_RELEASE_URL:-https://github.com/hack3ric/mimic/releases/latest}"
 # 三套 deb 的二进制同源(纯 Go),bookworm 兼容面最广;dkms 包是源码,与发行版无关
 MIMIC_DEB_SUITE="${MIMIC_DEB_SUITE:-bookworm}"
-MIMIC_VERSION_FALLBACK="${MIMIC_VERSION_FALLBACK:-v0.7.1}"
 
 getLatestMimicVersion() {
     local headers
@@ -36,7 +35,7 @@ downloadMimicDeb() {
     local expect actual
     expect=$(awk '{print $1}' "${out}.sha256" | head -n 1)
     actual=$(sha256sum "$out" | awk '{print $1}')
-    if [ -z "$expect" ] || [ "$expect" != "$actual" ]; then
+    if ! isValidSHA256 "$expect" || [ "${expect,,}" != "$actual" ]; then
         echoColor red "$(i18n mimic_download_fail)"
         rm -f "$out" "${out}.sha256"
         return 1
@@ -117,7 +116,7 @@ enableMimicBootModule() {
     fi
 }
 
-# 自动下载安装 mimic(程序 + 内核模块);失败返回非零,由调用方回退关闭 mimic
+# 自动下载安装 mimic(程序 + 内核模块);失败返回非零,终止本次配置
 installMimic() {
     local modules_dir="${HIHY_MODULES_LOAD_DIR:-/etc/modules-load.d}"
     # 已装且可用:直接复用
@@ -136,7 +135,8 @@ installMimic() {
     esac
     local tag ver base tmpdir
     tag=$(getLatestMimicVersion || true)
-    [ -z "$tag" ] && tag="$MIMIC_VERSION_FALLBACK"
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    case "$MIMIC_DEB_SUITE" in bookworm|noble|trixie) ;; *) return 1 ;; esac
     ver="${tag#v}"
     base="https://github.com/hack3ric/mimic/releases/download/${tag}"
     tmpdir=$(mktemp -d) || return 1

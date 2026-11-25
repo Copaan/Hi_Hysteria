@@ -31,6 +31,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     loadPersistedLanguage
     checkRoot
     case "${1:-}" in
+        firewallRestore|cronTask) ;;
+        *)
+            exec 9>/run/hihy.operation.lock
+            flock -n 9 || { securityError "Another hihy operation is running."; exit 1; }
+            ;;
+    esac
+    case "${1:-}" in
         install | 1)
             echoColor purple "$(i18n cmd_title_install)"
             install
@@ -61,7 +68,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             ;;
         updateHysteriaCore | 7)
             echoColor purple "$(i18n cmd_title_update_core)"
-            updateHysteriaCore
+            updateHysteriaCore "${2:-}"
             ;;
         generate_client_config | 8)
             echoColor purple "$(i18n cmd_title_view_config)"
@@ -95,6 +102,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             echoColor purple "$(i18n cmd_title_socks5)"
             addSocks5Outbound
             ;;
+        firewallRestore) firewallRestore ;;
         cronTask) cronTask ;;
         *) menu ;;
     esac

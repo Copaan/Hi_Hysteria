@@ -7,9 +7,9 @@ getBackupValueOrDefault() {
 
     value=$(getYamlValue "$file" "$key" 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$value" ] || [ "$value" = "null" ]; then
-        echo "$default_value"
+        printf '%s\n' "$default_value"
     else
-        echo "$value"
+        printf '%s\n' "$value"
     fi
 }
 
@@ -65,7 +65,9 @@ classifyInstallState() {
         return
     fi
 
-    if [ "$has_core_assets" = "true" ] && [ "$has_service_assets" = "true" ] && [ -f "$bin_link" ]; then
+    if [ "$has_core_assets" = "true" ] && [ "$has_service_assets" = "true" ] && [ -x "$bin_link" ] \
+        && [ -s "$root_dir/bin/appS" ] && [ -x "$root_dir/bin/appS" ] \
+        && [ -s "$root_dir/conf/config.yaml" ] && [ -s "$root_dir/conf/backup.yaml" ]; then
         echo "installed"
         return
     fi
@@ -92,24 +94,5 @@ clearInstallFailureMarker() {
     local failure_marker
     failure_marker="$(getInstallFailureMarker)"
     rm -f "$failure_marker"
-}
-
-recoverPartialInstallState() {
-    local root_dir="${1:-$HIHY_ROOT_DIR}"
-    local bin_link="${2:-$HIHY_BIN_LINK}"
-    local service_primary="${3:-$(getHihyServiceScriptPrimary)}"
-    local service_fallback="${4:-$(getHihyServiceScriptFallback)}"
-    local failure_marker="${5:-$(getInstallFailureMarker "$root_dir")}"
-    local rc_local="${6:-$HIHY_RC_LOCAL}"
-    local pid_file="${7:-$HIHY_PID_FILE}"
-
-    rm -f "$service_primary" "$service_fallback" "$pid_file"
-    rm -f "$root_dir/conf/config.yaml" "$root_dir/conf/backup.yaml"
-    rm -f "$failure_marker"
-
-    if [ -f "$rc_local" ]; then
-        sed -i '/\/etc\/rc\.d\/hihy start/d' "$rc_local"
-        sed -i '/\/etc\/rc\.d\/allow-port start/d' "$rc_local"
-    fi
 }
 

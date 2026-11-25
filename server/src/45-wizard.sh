@@ -1,18 +1,6 @@
 #!/bin/bash
-startInstallValidationProcess() {
-    local yaml_file="$1"
-    local debug_file="${2:-./hihy_debug.info}"
-
-    /etc/hihy/bin/appS -c "$yaml_file" server >"$debug_file" 2>&1 &
-}
-
 # ---------- 输入校验辅助 ----------
-isPositiveInt() {
-    case "${1:-}" in
-        '' | *[!0-9]*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
+isPositiveInt() { [[ "${1:-}" =~ ^(0|[1-9][0-9]*)$ ]]; }
 
 isValidPort() {
     isPositiveInt "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
@@ -140,7 +128,7 @@ collectHysteriaConfig() {
                 realmPassword="${realmPasswordInput}"
             fi
         fi
-        realmURI="realm://${realmPassword}@${realmAddress}/${realmName}"
+        realmURI="realm://$(urlEncode "$realmPassword")@${realmAddress}/$(urlEncode "$realmName")"
         echo -e "\n->$(i18n realm_uri_label)$(echoColor red "${realmURI}")\n"
         if command -v warp >/dev/null 2>&1 && [ -f "/etc/wireguard/warp.conf" ]; then
             echoColor purple "$(i18n warp_installed_hint)"
@@ -157,8 +145,7 @@ collectHysteriaConfig() {
         if [ "${warpChoice}" == "2" ]; then
             echoColor purple "$(i18n warp_installing)"
             echoColor purple "$(i18n warp_select_global_mode)"
-            wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh 2>/dev/null
-            bash menu.sh d
+            installWarpVerified d || return 1
             if [ -f "/etc/wireguard/warp.conf" ]; then
                 current_mtu=$(grep -oP '^MTU = \K\d+' /etc/wireguard/warp.conf)
                 if [ -n "${current_mtu}" ] && [ "${current_mtu}" -lt 1320 ]; then
@@ -1021,54 +1008,15 @@ autoHysteriaConfig() {
 }
 
 # ---------- 配置校验:轮询 debug 文件,返回 0=成功 1=超时 2=ACME失败 3=端口占用 ----------
-waitForValidationOutcome() {
-    local debug_file="$1"
-    local timeout="$2"
-    local elapsed=0
-    local marker
-
-    while [ "$elapsed" -lt "$timeout" ]; do
-        marker=$(grep -m1 -oE "server up and running|failed to get a certificate with ACME|bind: address already in use" "$debug_file" 2>/dev/null)
-        case "$marker" in
-            "server up and running") return 0 ;;
-            "failed to get a certificate with ACME") return 2 ;;
-            "bind: address already in use") return 3 ;;
-        esac
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-    return 1
-}
-
-stopValidationProcess() {
-    if ! command -v pkill >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
-        apk add --no-cache procps >/dev/null 2>&1
-    fi
-    killHysteriaProcess TERM
-}
-
-# 校验失败的统一善后:杀掉测试进程 -> 撤销防火墙 -> 清理本次生成的配置
-cleanupFailedValidation() {
-    local phase="$1"
-    local details="$2"
-
-    markInstallFailed "$phase" "$details"
-    stopValidationProcess
-    delHihyFirewallPort udp >/dev/null 2>&1 || true
-    delHihyFirewallPort tcp >/dev/null 2>&1 || true
-    rm -f /etc/hihy/conf/config.yaml /etc/hihy/conf/backup.yaml
-    rm -f ./hihy_debug.info
-}
-
 # ---------- 配置写入 + 校验 + 收尾(原 setHysteriaConfig 后半段,向导/一键共用) ----------
-writeHysteriaConfig() {
-    mkdir -p /etc/hihy/bin /etc/hihy/conf /etc/hihy/cert /etc/hihy/result /etc/hihy/acl/
-    acl_file="/etc/hihy/acl/acl.txt"
+generateStagedConfig() {
+    mkdir -p ${HIHY_CONFIG_ROOT}/bin ${HIHY_CONFIG_ROOT}/conf ${HIHY_CONFIG_ROOT}/cert ${HIHY_CONFIG_ROOT}/result ${HIHY_CONFIG_ROOT}/acl/ || return 1
+    acl_file="${HIHY_CONFIG_ROOT}/acl/acl.txt"
     rm -f "${acl_file}"
-    touch "${acl_file}"
-    yaml_file="/etc/hihy/conf/config.yaml"
+    touch "${acl_file}" || return 1
+    yaml_file="${HIHY_CONFIG_ROOT}/conf/config.yaml"
     rm -f "${yaml_file}"
-    touch "${yaml_file}"
+    touch "${yaml_file}" || return 1
 
     echoColor yellowBlack "$(i18n config_executing)"
     max_CRW=0
@@ -1084,106 +1032,96 @@ writeHysteriaConfig() {
     fi
 
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "listen" "${realmURI}"
+        addOrUpdateYaml "$yaml_file" "listen" "${realmURI}" || return 1
     elif [ "${portHoppingStatus}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "listen" ":${port},${portHoppingStart}-${portHoppingEnd}"
+        addOrUpdateYaml "$yaml_file" "listen" ":${port},${portHoppingStart}-${portHoppingEnd}" || return 1
     else
-        addOrUpdateYaml "$yaml_file" "listen" ":${port}"
+        addOrUpdateYaml "$yaml_file" "listen" ":${port}" || return 1
     fi
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "realm.stunServers[0]" "stun.nextcloud.com:3478"
-        addOrUpdateYaml "$yaml_file" "realm.stunServers[1]" "global.stun.twilio.com:3478"
-        addOrUpdateYaml "$yaml_file" "realm.stunTimeout" "5s"
-        addOrUpdateYaml "$yaml_file" "realm.punchTimeout" "5s"
-        addOrUpdateYaml "$yaml_file" "realm.heartbeatInterval" "30s"
-        addOrUpdateYaml "$yaml_file" "realm.insecure" "false"
-        addOrUpdateYaml "$yaml_file" "realm.ipMode" "dual"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.enabled" "true"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.timeout" "30s"
-        addOrUpdateYaml "$yaml_file" "realm.portMapping.lifetime" "10m"
+        addOrUpdateYaml "$yaml_file" "realm.stunServers[0]" "stun.nextcloud.com:3478" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.stunServers[1]" "global.stun.twilio.com:3478" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.stunTimeout" "5s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.punchTimeout" "5s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.heartbeatInterval" "30s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.insecure" "false" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.ipMode" "dual" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.enabled" "true" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.timeout" "30s" || return 1
+        addOrUpdateYaml "$yaml_file" "realm.portMapping.lifetime" "10m" || return 1
     fi
-    addOrUpdateYaml "$yaml_file" "auth.type" "password"
-    addOrUpdateYaml "$yaml_file" "auth.password" "${auth_secret}"
-    addOrUpdateYaml "$yaml_file" "ignoreClientBandwidth" "${ignore_client_bandwidth}"
+    addOrUpdateYaml "$yaml_file" "auth.type" "password" || return 1
+    addOrUpdateYaml "$yaml_file" "auth.password" "${auth_secret}" || return 1
+    addOrUpdateYaml "$yaml_file" "ignoreClientBandwidth" "${ignore_client_bandwidth}" || return 1
     if [ "${congestion_mode}" != "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "congestion.type" "${congestion_type}"
+        addOrUpdateYaml "$yaml_file" "congestion.type" "${congestion_type}" || return 1
     fi
     if [ "${congestion_type}" == "bbr" ]; then
-        addOrUpdateYaml "$yaml_file" "congestion.bbrProfile" "${congestion_bbr_profile}"
+        addOrUpdateYaml "$yaml_file" "congestion.bbrProfile" "${congestion_bbr_profile}" || return 1
     fi
     if [ "${obfs_status}" == "true" ]; then
-        addOrUpdateYaml "$yaml_file" "obfs.type" "${obfs_type}"
-        addOrUpdateYaml "$yaml_file" "obfs.${obfs_type}.password" "${obfs_pass}"
+        addOrUpdateYaml "$yaml_file" "obfs.type" "${obfs_type}" || return 1
+        addOrUpdateYaml "$yaml_file" "obfs.${obfs_type}.password" "${obfs_pass}" || return 1
     fi
-    # Mimic:内核 >= v2.12.0;与端口跳跃互斥(上面已保证不同时开)
-    if [ "${mimic_status}" == "true" ]; then
-        if ! localCoreVersionAtLeast "2.12.0"; then
-            echoColor yellow "$(i18n mimic_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
-            mimic_status="false"
-        else
-            # mimic 是独立项目;脚本自动下载安装(程序+内核模块),失败则回退关闭并提示
-            if installMimic; then
-                addOrUpdateYaml "$yaml_file" "mimic.enabled" "true" "bool"
-            else
-                echoColor yellow "$(i18n mimic_install_fallback)"
-                mimic_status="false"
-            fi
-        fi
+    if [ "${mimic_status}" = true ]; then
+        localCoreVersionAtLeast "2.12.0" && installMimic || return 1
+        addOrUpdateYaml "$yaml_file" "mimic.enabled" true bool || return 1
     fi
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "quic.initStreamReceiveWindow" "${SRW}"
-        addOrUpdateYaml "$yaml_file" "quic.maxStreamReceiveWindow" "${max_SRW}"
-        addOrUpdateYaml "$yaml_file" "quic.initConnReceiveWindow" "${CRW}"
-        addOrUpdateYaml "$yaml_file" "quic.maxConnReceiveWindow" "${max_CRW}"
+        addOrUpdateYaml "$yaml_file" "quic.initStreamReceiveWindow" "${SRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.maxStreamReceiveWindow" "${max_SRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.initConnReceiveWindow" "${CRW}" || return 1
+        addOrUpdateYaml "$yaml_file" "quic.maxConnReceiveWindow" "${max_CRW}" || return 1
     fi
-    addOrUpdateYaml "$yaml_file" "quic.maxIdleTimeout" "30s"
-    addOrUpdateYaml "$yaml_file" "quic.maxIncomingStreams" "1024"
-    addOrUpdateYaml "$yaml_file" "quic.disablePathMTUDiscovery" "false"
+    addOrUpdateYaml "$yaml_file" "quic.maxIdleTimeout" "30s" || return 1
+    addOrUpdateYaml "$yaml_file" "quic.maxIncomingStreams" "1024" || return 1
+    addOrUpdateYaml "$yaml_file" "quic.disablePathMTUDiscovery" "false" || return 1
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml "$yaml_file" "bandwidth.up" "${server_upload}mbps"
-        addOrUpdateYaml "$yaml_file" "bandwidth.down" "${server_download}mbps"
+        addOrUpdateYaml "$yaml_file" "bandwidth.up" "${server_upload}mbps" || return 1
+        addOrUpdateYaml "$yaml_file" "bandwidth.down" "${server_download}mbps" || return 1
         # 仅显式关闭时写入。旧内核(mapstructure)会静默忽略该未知字段:不会崩溃,但也不生效,
         # 所以这里提示用户先更新内核,免得以为已经关闭了补偿。
         if [ "${brutal_disable_loss_comp}" == "true" ]; then
-            addOrUpdateYaml "$yaml_file" "bandwidth.disableLossCompensation" "true" "bool"
+            addOrUpdateYaml "$yaml_file" "bandwidth.disableLossCompensation" "true" "bool" || return 1
             if ! localCoreVersionAtLeast "2.10.0"; then
                 echoColor yellow "$(i18n losscomp_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
             fi
         fi
     fi
-    addOrUpdateYaml "$yaml_file" "acl.file" "${acl_file}"
+    addOrUpdateYaml "$yaml_file" "acl.file" "${acl_file}" || return 1
     if [ "${masquerade_status}" == "true" ]; then
         case ${masquerade_type} in
             "string")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "string"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.content" "${masquerade_string}"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.content-type" "text/plain"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.custom-stuff" "${masquerade_stuff}"
-                addOrUpdateYaml "$yaml_file" "masquerade.string.statusCode" "200"
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "string" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.content" "${masquerade_string}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.content-type" "text/plain" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.headers.custom-stuff" "${masquerade_stuff}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.string.statusCode" "200" || return 1
                 ;;
             "proxy")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "proxy"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.url" "${masquerade_proxy}"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.rewriteHost" "true"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.insecure" "true"
-                addOrUpdateYaml "$yaml_file" "masquerade.proxy.xForwarded" "${masquerade_xforwarded}"
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "proxy" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.url" "${masquerade_proxy}" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.rewriteHost" "true" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.insecure" "false" || return 1
+                addOrUpdateYaml "$yaml_file" "masquerade.proxy.xForwarded" "${masquerade_xforwarded}" || return 1
                 ;;
             "file")
-                addOrUpdateYaml "$yaml_file" "masquerade.type" "file"
-                addOrUpdateYaml "$yaml_file" "masquerade.file.dir" "${masquerade_file}"
-                if [ ! -d "${masquerade_file}" ]; then
-                    mkdir -p "${masquerade_file}"
-                    wget -q -O ./mikutap.tar.gz https://github.com/HFIProgramming/mikutap/archive/refs/tags/2.0.0.tar.gz
-                    tar -xzf ./mikutap.tar.gz -C "${masquerade_file}" --strip-components=1
-                    rm -r ./mikutap.tar.gz
+                addOrUpdateYaml "$yaml_file" "masquerade.type" "file" || return 1
+                [ ! -L "$masquerade_file" ] || return 1
+                if [ "$masquerade_file" = "$HIHY_ROOT_DIR/file" ] && { [ ! -d "$masquerade_file" ] || [ -z "$(find "$masquerade_file" -mindepth 1 -maxdepth 1 -print -quit)" ]; }; then
+                    prepareMasqueradeFiles "$HIHY_CONFIG_ROOT/file" || return 1
+                    addOrUpdateYaml "$yaml_file" masquerade.file.dir "$HIHY_CONFIG_ROOT/file" string || return 1
+                else
+                    [[ "$masquerade_file" = /* ]] && [ -d "$masquerade_file" ] && [ ! -L "$masquerade_file" ] || return 1
+                    addOrUpdateYaml "$yaml_file" masquerade.file.dir "$masquerade_file" string || return 1
                 fi
                 ;;
         esac
         if [ "${realmMode}" != "true" ] && [ "${masquerade_tcp}" == "true" ]; then
-            addOrUpdateYaml "$yaml_file" "masquerade.listenHTTPS" ":${port}"
+            addOrUpdateYaml "$yaml_file" "masquerade.listenHTTPS" ":${port}" || return 1
         fi
     fi
-    addOrUpdateYaml "$yaml_file" "speedTest" "true"
+    addOrUpdateYaml "$yaml_file" "speedTest" "true" || return 1
     pinSHA256=""
     if echo "${useAcme}" | grep -q "false"; then
         if echo "${useLocalCert}" | grep -q "false"; then
@@ -1202,32 +1140,32 @@ writeHysteriaConfig() {
             mail="no-reply@qq.com"
             echoColor purple "$(i18n cert_generating_start)"
             echoColor green "$(i18n cert_ca_key)"
-            openssl genrsa -out /etc/hihy/cert/${domain}.ca.key 2048
+            openssl genrsa -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key 2048 || return 1
             echoColor green "$(i18n cert_ca_cert)"
-            openssl req -new -x509 -days ${days} -key /etc/hihy/cert/${domain}.ca.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=Tencent Root CA" -out /etc/hihy/cert/${domain}.ca.crt
+            openssl req -new -x509 -days ${days} -key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=Tencent Root CA" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt || return 1
             echoColor green "$(i18n cert_server_key_csr)"
-            openssl req -newkey rsa:2048 -nodes -keyout /etc/hihy/cert/${domain}.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=${domain}" -out /etc/hihy/cert/${domain}.csr
+            openssl req -newkey rsa:2048 -nodes -keyout ${HIHY_CONFIG_ROOT}/cert/${domain}.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=${domain}" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.csr || return 1
             echoColor green "$(i18n cert_sign_server)"
-            openssl x509 -req -extfile <(printf "subjectAltName=DNS:${domain},DNS:${domain}") -days ${days} -in /etc/hihy/cert/${domain}.csr -CA /etc/hihy/cert/${domain}.ca.crt -CAkey /etc/hihy/cert/${domain}.ca.key -CAcreateserial -out /etc/hihy/cert/${domain}.crt
+            openssl x509 -req -extfile <(printf "subjectAltName=DNS:${domain},DNS:${domain}") -days ${days} -in ${HIHY_CONFIG_ROOT}/cert/${domain}.csr -CA ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt -CAkey ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -CAcreateserial -out ${HIHY_CONFIG_ROOT}/cert/${domain}.crt || return 1
             echoColor green "$(i18n cert_cleanup)"
-            rm -f /etc/hihy/cert/${domain}.ca.key /etc/hihy/cert/${domain}.ca.srl /etc/hihy/cert/${domain}.csr
+            rm -f ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.srl ${HIHY_CONFIG_ROOT}/cert/${domain}.csr
             echoColor green "$(i18n cert_move_ca)"
-            mv /etc/hihy/cert/${domain}.ca.crt /etc/hihy/result
+            mv ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt ${HIHY_CONFIG_ROOT}/result || return 1
             echoColor purple "$(i18n cert_success)"
-            pinSHA256=$(openssl x509 -noout -fingerprint -sha256 -in /etc/hihy/cert/${domain}.crt 2>/dev/null | sed 's/^.*=//')
-            if [ -n "${pinSHA256}" ]; then
+            pinSHA256=$(openssl x509 -noout -fingerprint -sha256 -in ${HIHY_CONFIG_ROOT}/cert/${domain}.crt 2>/dev/null | sed 's/^.*=//')
+            if isValidFingerprint "${pinSHA256}"; then
                 echoColor green "$(i18n cert_sha256_label)$(echoColor red "${pinSHA256}")"
                 echoColor purple "$(i18n cert_pinsha256_hint)"
             else
                 echoColor yellow "$(i18n cert_fingerprint_fail)"
-                insecure="1"
+                return 1
             fi
-            addOrUpdateYaml "$yaml_file" "tls.cert" "/etc/hihy/cert/${domain}.crt"
-            addOrUpdateYaml "$yaml_file" "tls.key" "/etc/hihy/cert/${domain}.key"
+            addOrUpdateYaml "$yaml_file" "tls.cert" "${HIHY_CONFIG_ROOT}/cert/${domain}.crt" || return 1
+            addOrUpdateYaml "$yaml_file" "tls.key" "${HIHY_CONFIG_ROOT}/cert/${domain}.key" || return 1
             if [ "${realmMode}" == "true" ]; then
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable" || return 1
             else
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict" || return 1
             fi
         else
             u_host=${domain}
@@ -1236,12 +1174,12 @@ writeHysteriaConfig() {
                 remarks="${domain}"
             fi
             insecure="0"
-            addOrUpdateYaml "$yaml_file" "tls.cert" "${local_cert}"
-            addOrUpdateYaml "$yaml_file" "tls.key" "${local_key}"
+            addOrUpdateYaml "$yaml_file" "tls.cert" "${local_cert}" || return 1
+            addOrUpdateYaml "$yaml_file" "tls.key" "${local_key}" || return 1
             if [ "${realmMode}" == "true" ]; then
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "disable" || return 1
             else
-                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict"
+                addOrUpdateYaml "$yaml_file" "tls.sniGuard" "strict" || return 1
             fi
         fi
     else
@@ -1251,41 +1189,39 @@ writeHysteriaConfig() {
         if [ -z "${remarks}" ]; then
             remarks="${domain}"
         fi
-        addOrUpdateYaml "$yaml_file" "acme.domains" "${domain}"
-        addOrUpdateYaml "$yaml_file" "acme.email" "pekora@${domain}"
-        addOrUpdateYaml "$yaml_file" "acme.ca" "letsencrypt"
-        addOrUpdateYaml "$yaml_file" "acme.dir" "/etc/hihy/cert"
+        addOrUpdateYaml "$yaml_file" "acme.domains[0]" "${domain}" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.email" "pekora@${domain}" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.ca" "letsencrypt" || return 1
+        addOrUpdateYaml "$yaml_file" "acme.dir" "${HIHY_CONFIG_ROOT}/cert" || return 1
         if [ "${useDns}" == "true" ]; then
             u_host=${ip}
-            addOrUpdateYaml "$yaml_file" "acme.type" "dns"
+            addOrUpdateYaml "$yaml_file" "acme.type" "dns" || return 1
             case ${dns} in
                 "cloudflare")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "cloudflare"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.cloudflare_api_token" "${cloudflare_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "cloudflare" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.cloudflare_api_token" "${cloudflare_api_token}" || return 1
                     ;;
                 "duckdns")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "duckdns"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_api_token" "${duckdns_api_token}"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_override_domain" "${duckdns_override_domain}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "duckdns" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_api_token" "${duckdns_api_token}" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.duckdns_override_domain" "${duckdns_override_domain}" || return 1
                     ;;
                 "gandi")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "gandi"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.gandi_api_token" "${gandi_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "gandi" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.gandi_api_token" "${gandi_api_token}" || return 1
                     ;;
                 "godaddy")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "godaddy"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.godaddy_api_token" "${godaddy_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "godaddy" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.godaddy_api_token" "${godaddy_api_token}" || return 1
                     ;;
                 "vultr")
-                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "vultr"
-                    addOrUpdateYaml "$yaml_file" "acme.dns.config.vultr_api_token" "${vultr_api_token}"
+                    addOrUpdateYaml "$yaml_file" "acme.dns.name" "vultr" || return 1
+                    addOrUpdateYaml "$yaml_file" "acme.dns.config.vultr_api_token" "${vultr_api_token}" || return 1
                     ;;
             esac
         else
-            getPortBindMsg TCP 80
-            allowPort tcp 80
-            addOrUpdateYaml "$yaml_file" "acme.type" "http"
-            addOrUpdateYaml "$yaml_file" "acme.listenHost" "0.0.0.0"
+            addOrUpdateYaml "$yaml_file" "acme.type" "http" || return 1
+            addOrUpdateYaml "$yaml_file" "acme.listenHost" "0.0.0.0" || return 1
         fi
     fi
     if [ "${realmMode}" == "true" ]; then
@@ -1296,160 +1232,94 @@ writeHysteriaConfig() {
     if [ "${ech_status}" == "true" ]; then
         if ! localCoreVersionAtLeast "2.10.0"; then
             echoColor yellow "$(i18n ech_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
-            ech_status="false"
-            ech_config=""
-        elif generateEchKeypair "/etc/hihy/cert/ech.pem" "${ech_public_name}"; then
-            addOrUpdateYaml "$yaml_file" "ech.keyPath" "/etc/hihy/cert/ech.pem"
+            return 1
+        elif generateEchKeypair "${HIHY_CONFIG_ROOT}/cert/ech.pem" "${ech_public_name}"; then
+            addOrUpdateYaml "$yaml_file" "ech.keyPath" "${HIHY_CONFIG_ROOT}/cert/ech.pem" || return 1
             echoColor green "$(i18n ech_keygen_success "$(echoColor red "${ech_public_name}")")"
         else
             echoColor yellow "$(i18n ech_keygen_failed)"
-            ech_status="false"
-            ech_config=""
+            return 1
         fi
     fi
 
-    addOrUpdateYaml "$yaml_file" "sniff.enabled" "true"
-    addOrUpdateYaml "$yaml_file" "sniff.timeout" "2s"
-    addOrUpdateYaml "$yaml_file" "sniff.rewriteDomain" "false"
-    addOrUpdateYaml "$yaml_file" "sniff.tcpPorts" "80,443"
-    addOrUpdateYaml "$yaml_file" "sniff.udpPorts" "80,443"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].name" "hihy" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.mode" "auto" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.fastOpen" "false" "bool"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].name" "v4_only" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.mode" "4" "number"
-    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.fastOpen" "false" "bool"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].name" "v6_only" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].type" "direct" "string"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.mode" "6" "number"
-    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.fastOpen" "false" "bool"
+    addOrUpdateYaml "$yaml_file" "sniff.enable" "true" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.timeout" "2s" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.rewriteDomain" "false" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.tcpPorts" "80,443" || return 1
+    addOrUpdateYaml "$yaml_file" "sniff.udpPorts" "80,443" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].name" "hihy" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.mode" "auto" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[0].direct.fastOpen" "false" "bool" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].name" "v4_only" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.mode" "4" "number" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[1].direct.fastOpen" "false" "bool" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].name" "v6_only" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].type" "direct" "string" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.mode" "6" "number" || return 1
+    addOrUpdateYaml "$yaml_file" "outbounds[2].direct.fastOpen" "false" "bool" || return 1
     trafficPort=$(($(od -An -N2 -i /dev/urandom) % (65534 - 10001) + 10001))
     if [ "$trafficPort" == "${port}" ]; then
         trafficPort=$((${port} + 1))
     fi
-    addOrUpdateYaml "$yaml_file" "trafficStats.listen" "127.0.0.1:${trafficPort}"
-    addOrUpdateYaml "$yaml_file" "trafficStats.secret" "${auth_secret}"
+    addOrUpdateYaml "$yaml_file" "trafficStats.listen" "127.0.0.1:${trafficPort}" || return 1
+    addOrUpdateYaml "$yaml_file" "trafficStats.secret" "$(generate_uuid)" "string" || return 1
     if [ "${block_http3}" == "true" ]; then
         echo -e "reject(all, udp/443)" >${acl_file}
     fi
-    if [ ${max_CRW} -gt 0 ]; then
-        if sysctl -w net.core.rmem_max=${max_CRW} >/dev/null 2>&1 \
-            && sysctl -w net.core.wmem_max=${max_CRW} >/dev/null 2>&1; then
-            # 持久化,重启后依然生效(容器环境可能只读,失败仅提示)
-            if mkdir -p /etc/sysctl.d 2>/dev/null; then
-                printf 'net.core.rmem_max=%s\nnet.core.wmem_max=%s\n' "${max_CRW}" "${max_CRW}" \
-                    >/etc/sysctl.d/99-hihy.conf 2>/dev/null || true
-            fi
-        else
-            echoColor yellow "$(i18n sysctl_apply_failed)"
-        fi
-    fi
-    local validation_timeout=15
-    if [ "${useAcme}" == "true" ]; then
-        validation_timeout=60
-    fi
-    echoColor purple "\n$(i18n test_config)\n"
-    echoColor gray "$(i18n validation_waiting "${validation_timeout}")"
-    startInstallValidationProcess "${yaml_file}" "./hihy_debug.info"
-    waitForValidationOutcome "./hihy_debug.info" "${validation_timeout}"
-    case $? in
-        0)
-            echoColor green "$(i18n test_success)"
-            echoColor purple "$(i18n stop_test_program)"
-            stopValidationProcess
-            rm -f ./hihy_debug.info
-            if [ "${realmMode}" != "true" ]; then
-                allowPort udp ${port}
-                if [ "${portHoppingStatus}" == "true" ]; then
-                    allowPort udp "${portHoppingStart}:${portHoppingEnd}"
-                fi
-                if [ "${masquerade_tcp}" == "true" ]; then
-                    getPortBindMsg TCP ${port}
-                    allowPort tcp ${port}
-                fi
-            fi
-            echoColor purple "$(i18n generating_config)"
-            ;;
-        2)
-            echoColor red "$(i18n acme_cert_fail ${u_host})"
-            cleanupFailedValidation "certificate" "failed to get a certificate with ACME"
-            echoColor yellow "$(i18n acme_incomplete_state)"
-            exit 1
-            ;;
-        3)
-            cleanupFailedValidation "port-bind" "bind: address already in use"
-            echoColor red "$(i18n port_bind_fail)"
-            echoColor yellow "$(i18n acme_incomplete_state)"
-            exit 1
-            ;;
-        *)
-            echoColor red "$(i18n unknown_error)"
-            echoColor yellow "$(i18n unknown_error_incomplete_state)"
-            cat ./hihy_debug.info
-            cleanupFailedValidation "config-test" "unknown error while validating generated config"
-            exit 1
-            ;;
-    esac
-    backup_file="/etc/hihy/conf/backup.yaml"
+    backup_file="${HIHY_CONFIG_ROOT}/conf/backup.yaml"
     rm -f "${backup_file}"
-    touch "${backup_file}"
-    addOrUpdateYaml ${backup_file} "remarks" "${remarks}"
-    addOrUpdateYaml ${backup_file} "serverAddress" "${u_host}" "string"
-    addOrUpdateYaml ${backup_file} "serverPort" "${port}"
-    addOrUpdateYaml ${backup_file} "congestionMode" "${congestion_mode}"
-    addOrUpdateYaml ${backup_file} "congestionType" "${congestion_type}"
-    addOrUpdateYaml ${backup_file} "ignoreClientBandwidth" "${ignore_client_bandwidth}"
+    touch "${backup_file}" || return 1
+    addOrUpdateYaml ${backup_file} "remarks" "${remarks}" || return 1
+    addOrUpdateYaml ${backup_file} "serverAddress" "${u_host}" "string" || return 1
+    addOrUpdateYaml ${backup_file} "serverPort" "${port}" || return 1
+    addOrUpdateYaml ${backup_file} "congestionMode" "${congestion_mode}" || return 1
+    addOrUpdateYaml ${backup_file} "congestionType" "${congestion_type}" || return 1
+    addOrUpdateYaml ${backup_file} "ignoreClientBandwidth" "${ignore_client_bandwidth}" || return 1
     if [ "${congestion_type}" == "bbr" ]; then
-        addOrUpdateYaml ${backup_file} "congestionBbrProfile" "${congestion_bbr_profile}"
+        addOrUpdateYaml ${backup_file} "congestionBbrProfile" "${congestion_bbr_profile}" || return 1
     fi
-    addOrUpdateYaml ${backup_file} "portHoppingStatus" "${portHoppingStatus}"
-    addOrUpdateYaml ${backup_file} "portHoppingStart" "${portHoppingStart}"
-    addOrUpdateYaml ${backup_file} "portHoppingEnd" "${portHoppingEnd}"
-    addOrUpdateYaml ${backup_file} "portHoppingIntervalMode" "${portHoppingIntervalMode}"
-    addOrUpdateYaml ${backup_file} "portHoppingHopInterval" "${portHoppingHopInterval}"
-    addOrUpdateYaml ${backup_file} "portHoppingMinHopInterval" "${portHoppingMinHopInterval}"
-    addOrUpdateYaml ${backup_file} "portHoppingMaxHopInterval" "${portHoppingMaxHopInterval}"
-    addOrUpdateYaml ${backup_file} "domain" "${domain}"
-    addOrUpdateYaml ${backup_file} "trafficPort" "${trafficPort}"
-    addOrUpdateYaml ${backup_file} "socks5_status" "false"
-    addOrUpdateYaml ${backup_file} "realmMode" "${realmMode}"
+    addOrUpdateYaml ${backup_file} "portHoppingStatus" "${portHoppingStatus}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingStart" "${portHoppingStart}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingEnd" "${portHoppingEnd}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingIntervalMode" "${portHoppingIntervalMode}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingHopInterval" "${portHoppingHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingMinHopInterval" "${portHoppingMinHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "portHoppingMaxHopInterval" "${portHoppingMaxHopInterval}" || return 1
+    addOrUpdateYaml ${backup_file} "domain" "${domain}" || return 1
+    addOrUpdateYaml ${backup_file} "trafficPort" "${trafficPort}" || return 1
+    addOrUpdateYaml ${backup_file} "socks5_status" "false" || return 1
+    addOrUpdateYaml ${backup_file} "realmMode" "${realmMode}" || return 1
     if [ "${realmMode}" == "true" ]; then
-        addOrUpdateYaml ${backup_file} "realmURI" "${realmURI}"
-        addOrUpdateYaml ${backup_file} "realmName" "${realmName}"
+        addOrUpdateYaml ${backup_file} "realmURI" "${realmURI}" || return 1
+        addOrUpdateYaml ${backup_file} "realmName" "${realmName}" || return 1
     fi
-    addOrUpdateYaml ${backup_file} "masquerade_status" "${masquerade_status}"
-    addOrUpdateYaml ${backup_file} "masquerade_xforwarded" "${masquerade_xforwarded}"
-    addOrUpdateYaml ${backup_file} "masquerade_tcp" "${masquerade_tcp}"
-    addOrUpdateYaml ${backup_file} "ech_status" "${ech_status}"
-    addOrUpdateYaml ${backup_file} "mimic_status" "${mimic_status}"
+    addOrUpdateYaml ${backup_file} "masquerade_status" "${masquerade_status}" || return 1
+    addOrUpdateYaml ${backup_file} "masquerade_xforwarded" "${masquerade_xforwarded}" || return 1
+    addOrUpdateYaml ${backup_file} "masquerade_tcp" "${masquerade_tcp}" || return 1
+    addOrUpdateYaml ${backup_file} "ech_status" "${ech_status}" || return 1
+    addOrUpdateYaml ${backup_file} "mimic_status" "${mimic_status}" || return 1
     if [ "${ech_status}" == "true" ]; then
-        addOrUpdateYaml ${backup_file} "ech_public_name" "${ech_public_name}"
-        addOrUpdateYaml ${backup_file} "ech_config" "${ech_config}" "string"
+        addOrUpdateYaml ${backup_file} "ech_public_name" "${ech_public_name}" || return 1
+        addOrUpdateYaml ${backup_file} "ech_config" "${ech_config}" "string" || return 1
     fi
     if [ "${congestion_mode}" == "brutal" ]; then
-        addOrUpdateYaml ${backup_file} "disable_loss_compensation" "${brutal_disable_loss_comp}"
+        addOrUpdateYaml ${backup_file} "disable_loss_compensation" "${brutal_disable_loss_comp}" || return 1
     fi
     if [ "${insecure}" == "1" ]; then
-        addOrUpdateYaml ${backup_file} "insecure" "true"
+        addOrUpdateYaml ${backup_file} "insecure" "true" || return 1
     else
-        addOrUpdateYaml ${backup_file} "insecure" "false"
+        addOrUpdateYaml ${backup_file} "insecure" "false" || return 1
     fi
     if [ -n "${pinSHA256}" ]; then
-        addOrUpdateYaml ${backup_file} "pinSHA256" "${pinSHA256}" "string"
+        addOrUpdateYaml ${backup_file} "pinSHA256" "${pinSHA256}" "string" || return 1
     fi
-    if ! installHihyLauncher; then
-        markInstallFailed "launcher" "failed to install hihy launcher"
-        echoColor red "$(i18n hihy_cmd_install_fail)"
-        exit 1
-    fi
-    clearInstallFailureMarker
-    echoColor greenWhite "$(i18n install_success)"
+    return 0
 }
 
 setHysteriaConfig() {
     setConfigDefaults
-    collectHysteriaConfig
+    collectHysteriaConfig || return 1
     writeHysteriaConfig
 }

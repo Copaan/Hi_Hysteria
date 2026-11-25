@@ -14,10 +14,10 @@ parseRealmURI() {
         HIHY_REALM_SCHEME="https"
         rest="${uri#realm://}"
     fi
-    HIHY_REALM_TOKEN="${rest%%@*}"
+    HIHY_REALM_TOKEN=$(urlDecode "${rest%%@*}") || return 1
     rest="${rest#*@}"
     hostport="${rest%%/*}"
-    HIHY_REALM_ID="${rest#*/}"
+    HIHY_REALM_ID=$(urlDecode "${rest#*/}") || return 1
     HIHY_REALM_SERVER_URL="${HIHY_REALM_SCHEME}://${hostport}"
     export HIHY_REALM_SCHEME HIHY_REALM_SERVER_URL HIHY_REALM_TOKEN HIHY_REALM_ID
 }
@@ -30,6 +30,8 @@ loadClientParams() {
 
     HIHY_CP_remarks=$(getYamlValue "$backup" "remarks")
     HIHY_CP_serverAddress=$(getYamlValue "$backup" "serverAddress")
+    HIHY_CP_serverAddress="${HIHY_CP_serverAddress#[}"
+    HIHY_CP_serverAddress="${HIHY_CP_serverAddress%]}"
     HIHY_CP_realmMode=$(getBackupValueOrDefault "$backup" "realmMode" "false")
     HIHY_CP_realmURI=""
     if [ "$HIHY_CP_realmMode" = "true" ]; then
@@ -97,9 +99,17 @@ loadClientParams() {
     HIHY_CP_echConfig=""
     if [ "$HIHY_CP_echStatus" = "true" ]; then
         HIHY_CP_echConfig=$(getBackupValueOrDefault "$backup" "ech_config" "")
-        [ -z "$HIHY_CP_echConfig" ] && HIHY_CP_echStatus="false"
+        [ -n "$HIHY_CP_echConfig" ] || { securityError "ECH client configuration is missing."; return 1; }
     fi
 
     # Mimic(v1.17 起记录):伪装 TCP,仅原生客户端可用
     HIHY_CP_mimicStatus=$(getBackupValueOrDefault "$backup" "mimic_status" "false")
+    if [ -n "$HIHY_CP_pinSHA256" ]; then
+        isValidFingerprint "$HIHY_CP_pinSHA256" || return 1
+    elif [ "$HIHY_CP_insecure" = true ]; then
+        securityError "Refusing to export a client without certificate verification."
+        return 1
+    fi
+    return 0
+
 }

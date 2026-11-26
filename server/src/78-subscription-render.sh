@@ -26,16 +26,21 @@ subscriptionValidatePaths() {
 subscriptionValidDomain() { isValidDomain "$1" && [[ "$1" = *.* && "$1" =~ [A-Za-z] ]]; }
 subscriptionValidToken() { [[ "$1" =~ ^[a-f0-9]{64}$ ]]; }
 
-# Render only client-facing credentials into one private, complete generation.
-subscriptionRenderSnapshot() (
-    local source_root="$1" output="$2" remarks file
+# 检查当前配置是否能用于三类完整订阅。
+subscriptionCheckCompatibility() {
+    local source_root="$1" tcp_listen
     [ -s "$source_root/conf/config.yaml" ] && [ -s "$source_root/conf/backup.yaml" ] || return 1
     [ "$(getBackupValueOrDefault "$source_root/conf/backup.yaml" mimic_status false)" != true ] \
         && [ "$(getBackupValueOrDefault "$source_root/conf/config.yaml" mimic.enabled false)" != true ] \
         || { subscriptionError sub_incompatible; return 1; }
-    local tcp_listen
     tcp_listen=$(getBackupValueOrDefault "$source_root/conf/config.yaml" masquerade.listenHTTPS '')
     [[ "$tcp_listen" != *:443 ]] || { subscriptionError sub_port_conflict; return 1; }
+}
+
+# Render only client-facing credentials into one private, complete generation.
+subscriptionRenderSnapshot() (
+    local source_root="$1" output="$2" remarks file
+    subscriptionCheckCompatibility "$source_root" || return 1
     mkdir -p "$output" || return 1
     [ ! -L "$output" ] || return 1
     HIHY_ROOT_DIR="$source_root"

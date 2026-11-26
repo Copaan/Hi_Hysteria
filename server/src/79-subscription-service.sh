@@ -294,6 +294,47 @@ subscriptionUninstall() {
     if [ "$account_owned" = true ] && id "$HIHY_SUB_USER" >/dev/null 2>&1; then userdel "$HIHY_SUB_USER" || return 1; fi
 }
 
+# 回车接受默认选项；输入结束或明确拒绝时不启用订阅。
+subscriptionConfirmInstall() {
+    local answer
+    while true; do
+        read -r -p "$(msg sub_install_confirm)" answer || return 1
+        case "${answer,,}" in
+            ''|y|yes) return 0 ;;
+            n|no) return 1 ;;
+            *) printf '%s\n' "$(msg sub_install_choice_invalid)" ;;
+        esac
+    done
+}
+
+# 为首次交互安装收集独立订阅域名，复用已保存的订阅启用流程。
+subscriptionOfferAfterInstall() {
+    local acme="${1:-false}" local_cert_mode="${2:-false}" candidate="${3:-}"
+    local subscription_domain="" entered=""
+    subscriptionEnabled && return 0
+    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
+    if { [ "$acme" = true ] || [ "$local_cert_mode" = true ]; } && subscriptionValidDomain "$candidate"; then
+        subscriptionConfirmInstall || return 0
+        while true; do
+            read -r -p "$(msg sub_install_domain_default "$candidate")" entered || return 0
+            subscription_domain="${entered:-$candidate}"
+            subscription_domain="${subscription_domain,,}"
+            subscriptionValidDomain "$subscription_domain" && break
+            printf '%s\n' "$(msg sub_bad_domain)"
+        done
+    else
+        while true; do
+            read -r -p "$(msg sub_install_domain_optional)" entered || return 0
+            [ -n "$entered" ] || return 0
+            subscription_domain="${entered,,}"
+            subscriptionValidDomain "$subscription_domain" && break
+            printf '%s\n' "$(msg sub_bad_domain)"
+        done
+        subscriptionConfirmInstall || return 0
+    fi
+    subscriptionEnable "$subscription_domain"
+}
+
 subscriptionMenu() {
     local choice
     printf '%s\n' "$(msg sub_menu_choices)"

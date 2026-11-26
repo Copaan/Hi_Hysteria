@@ -9,6 +9,8 @@
 
 ## 启用和导入
 
+首次交互安装完成后，可按提示直接启用订阅，默认选择“是”。ACME／本地证书模式会预填当前域名，可以修改；自签模式另填自己的订阅域名，留空跳过。自动安装和重新配置不会重复询问，可随时从菜单 17 启用。
+
 ~~~bash
 sudo hihy subscription enable sub.example.com
 sudo hihy subscription show

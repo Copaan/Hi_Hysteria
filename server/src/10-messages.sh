@@ -544,7 +544,7 @@ messageTemplate() {
         mimic_module_manual_hint) printf '%s' 'mimic 内核模块未能自动编译(缺少 dkms/内核头文件)。请按 Getting Started 手动安装模块后重试: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md' ;;
         mimic_install_fallback) printf '%s' 'Mimic 安装失败；已中止本次配置并保留现有服务。' ;;
         menu_item_subscription) printf '%s' '订阅管理' ;;
-        sub_incompatible) printf '%s' '当前配置不能同时用于三类订阅客户端；启用 Mimic 前请先关闭订阅。' ;;
+        sub_incompatible) printf '%s' 'Mimic 与三端 HTTPS 订阅不能同时启用，请先关闭其中一项。' ;;
         sub_port_conflict) printf '%s' 'TCP 443 已被使用或预留；请先明确处理冲突，不会停止其他服务。' ;;
         sub_render_failed) printf '%s' '无法生成完整订阅配置；保留上一代内容。' ;;
         sub_not_enabled) printf '%s' '订阅尚未启用。' ;;
@@ -571,6 +571,11 @@ messageTemplate() {
         sub_disabled) printf '%s' '订阅 HTTPS 已停止，私有设置和证书已保留。' ;;
         sub_rotation_hint) printf '%s' '旧订阅地址已撤销；已下载的代理凭据仍有效，撤销连接权限还需更换服务密码。' ;;
         sub_menu_choices) printf '%s' '1) 启用  2) 状态  3) 显示地址  4) 刷新  5) 轮换令牌  6) 关闭  0) 返回' ;;
+        sub_install_confirm) printf '%s' '是否启用 HTTPS 订阅？[Y/n]：' ;;
+        sub_install_domain_default) printf '%s' '订阅域名 [%s]（回车沿用，可修改；需直连解析并开放 TCP 443）：' ;;
+        sub_install_domain_optional) printf '%s' '自己的订阅域名（需直连解析并开放 TCP 443；留空跳过）：' ;;
+        sub_install_choice_invalid) printf '%s' '请输入 y 或 n，直接回车表示启用。' ;;
+        sub_install_failed) printf '%s' 'Hysteria 已安装；HTTPS 订阅未启用，可在菜单 17 重试。' ;;
         *) printf '未知提示：%s' "${1:-}"; return 1 ;;
     esac
 }

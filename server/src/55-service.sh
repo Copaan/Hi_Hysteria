@@ -340,6 +340,12 @@ install() {
     clearInstallFailureMarker
     generate_client_config || return 1
     echoColor yellowBlack "$(msg install_done)"
+    if [ "$mode" != auto ]; then
+        if ! subscriptionOfferAfterInstall "${useAcme:-false}" "${useLocalCert:-false}" "${domain:-}"; then
+            printf '%s\n' "$(msg sub_install_failed)" >&2
+        fi
+    fi
+    return 0
 }
 
 # 将 listen 中的范围端口格式 47000-48000 转换为防火墙规则使用的 47000:48000

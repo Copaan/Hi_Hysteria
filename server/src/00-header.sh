@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.22-secure.1"
+hihyV="ver1.23-secure.1"
 umask 077
 
 HIHY_ROOT_DIR="${HIHY_ROOT_DIR:-/etc/hihy}"

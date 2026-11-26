@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.22-secure.1"
+hihyV="ver1.23-secure.1"
 # GENERATED FILE — edit server/src/ and run bash scripts/build.sh.
 umask 077
 
@@ -696,7 +696,7 @@ messageTemplate() {
         mimic_module_manual_hint) printf '%s' 'mimic 内核模块未能自动编译(缺少 dkms/内核头文件)。请按 Getting Started 手动安装模块后重试: https://github.com/hack3ric/mimic/blob/master/docs/getting-started.md' ;;
         mimic_install_fallback) printf '%s' 'Mimic 安装失败；已中止本次配置并保留现有服务。' ;;
         menu_item_subscription) printf '%s' '订阅管理' ;;
-        sub_incompatible) printf '%s' '当前配置不能同时用于三类订阅客户端；启用 Mimic 前请先关闭订阅。' ;;
+        sub_incompatible) printf '%s' 'Mimic 与三端 HTTPS 订阅不能同时启用，请先关闭其中一项。' ;;
         sub_port_conflict) printf '%s' 'TCP 443 已被使用或预留；请先明确处理冲突，不会停止其他服务。' ;;
         sub_render_failed) printf '%s' '无法生成完整订阅配置；保留上一代内容。' ;;
         sub_not_enabled) printf '%s' '订阅尚未启用。' ;;
@@ -723,6 +723,11 @@ messageTemplate() {
         sub_disabled) printf '%s' '订阅 HTTPS 已停止，私有设置和证书已保留。' ;;
         sub_rotation_hint) printf '%s' '旧订阅地址已撤销；已下载的代理凭据仍有效，撤销连接权限还需更换服务密码。' ;;
         sub_menu_choices) printf '%s' '1) 启用  2) 状态  3) 显示地址  4) 刷新  5) 轮换令牌  6) 关闭  0) 返回' ;;
+        sub_install_confirm) printf '%s' '是否启用 HTTPS 订阅？[Y/n]：' ;;
+        sub_install_domain_default) printf '%s' '订阅域名 [%s]（回车沿用，可修改；需直连解析并开放 TCP 443）：' ;;
+        sub_install_domain_optional) printf '%s' '自己的订阅域名（需直连解析并开放 TCP 443；留空跳过）：' ;;
+        sub_install_choice_invalid) printf '%s' '请输入 y 或 n，直接回车表示启用。' ;;
+        sub_install_failed) printf '%s' 'Hysteria 已安装；HTTPS 订阅未启用，可在菜单 17 重试。' ;;
         *) printf '未知提示：%s' "${1:-}"; return 1 ;;
     esac
 }
@@ -3718,6 +3723,12 @@ install() {
     clearInstallFailureMarker
     generate_client_config || return 1
     echoColor yellowBlack "$(msg install_done)"
+    if [ "$mode" != auto ]; then
+        if ! subscriptionOfferAfterInstall "${useAcme:-false}" "${useLocalCert:-false}" "${domain:-}"; then
+            printf '%s\n' "$(msg sub_install_failed)" >&2
+        fi
+    fi
+    return 0
 }
 
 # 将 listen 中的范围端口格式 47000-48000 转换为防火墙规则使用的 47000:48000
@@ -4771,16 +4782,21 @@ subscriptionValidatePaths() {
 subscriptionValidDomain() { isValidDomain "$1" && [[ "$1" = *.* && "$1" =~ [A-Za-z] ]]; }
 subscriptionValidToken() { [[ "$1" =~ ^[a-f0-9]{64}$ ]]; }
 
-# Render only client-facing credentials into one private, complete generation.
-subscriptionRenderSnapshot() (
-    local source_root="$1" output="$2" remarks file
+# 检查当前配置是否能用于三类完整订阅。
+subscriptionCheckCompatibility() {
+    local source_root="$1" tcp_listen
     [ -s "$source_root/conf/config.yaml" ] && [ -s "$source_root/conf/backup.yaml" ] || return 1
     [ "$(getBackupValueOrDefault "$source_root/conf/backup.yaml" mimic_status false)" != true ] \
         && [ "$(getBackupValueOrDefault "$source_root/conf/config.yaml" mimic.enabled false)" != true ] \
         || { subscriptionError sub_incompatible; return 1; }
-    local tcp_listen
     tcp_listen=$(getBackupValueOrDefault "$source_root/conf/config.yaml" masquerade.listenHTTPS '')
     [[ "$tcp_listen" != *:443 ]] || { subscriptionError sub_port_conflict; return 1; }
+}
+
+# Render only client-facing credentials into one private, complete generation.
+subscriptionRenderSnapshot() (
+    local source_root="$1" output="$2" remarks file
+    subscriptionCheckCompatibility "$source_root" || return 1
     mkdir -p "$output" || return 1
     [ ! -L "$output" ] || return 1
     HIHY_ROOT_DIR="$source_root"
@@ -5252,6 +5268,47 @@ subscriptionUninstall() {
     systemctl daemon-reload || return 1
     for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB"; do rm -rf -- "$dir" || return 1; done
     if [ "$account_owned" = true ] && id "$HIHY_SUB_USER" >/dev/null 2>&1; then userdel "$HIHY_SUB_USER" || return 1; fi
+}
+
+# 回车接受默认选项；输入结束或明确拒绝时不启用订阅。
+subscriptionConfirmInstall() {
+    local answer
+    while true; do
+        read -r -p "$(msg sub_install_confirm)" answer || return 1
+        case "${answer,,}" in
+            ''|y|yes) return 0 ;;
+            n|no) return 1 ;;
+            *) printf '%s\n' "$(msg sub_install_choice_invalid)" ;;
+        esac
+    done
+}
+
+# 为首次交互安装收集独立订阅域名，复用已保存的订阅启用流程。
+subscriptionOfferAfterInstall() {
+    local acme="${1:-false}" local_cert_mode="${2:-false}" candidate="${3:-}"
+    local subscription_domain="" entered=""
+    subscriptionEnabled && return 0
+    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
+    if { [ "$acme" = true ] || [ "$local_cert_mode" = true ]; } && subscriptionValidDomain "$candidate"; then
+        subscriptionConfirmInstall || return 0
+        while true; do
+            read -r -p "$(msg sub_install_domain_default "$candidate")" entered || return 0
+            subscription_domain="${entered:-$candidate}"
+            subscription_domain="${subscription_domain,,}"
+            subscriptionValidDomain "$subscription_domain" && break
+            printf '%s\n' "$(msg sub_bad_domain)"
+        done
+    else
+        while true; do
+            read -r -p "$(msg sub_install_domain_optional)" entered || return 0
+            [ -n "$entered" ] || return 0
+            subscription_domain="${entered,,}"
+            subscriptionValidDomain "$subscription_domain" && break
+            printf '%s\n' "$(msg sub_bad_domain)"
+        done
+        subscriptionConfirmInstall || return 0
+    fi
+    subscriptionEnable "$subscription_domain"
 }
 
 subscriptionMenu() {

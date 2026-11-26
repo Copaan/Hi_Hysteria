@@ -49,9 +49,11 @@ PY
 subscriptionCheckDomain() { [ "$1" = sub.example.test ]; }
 core_before=$(sha256sum "$HIHY_ROOT_DIR/conf/config.yaml")
 before_pointer=$(readlink "$HIHY_SUB_STATE/content/current" 2>/dev/null || true)
+subscriptionCollectInstallChoice false true sub.example.test < <(printf '\n\n')
+[ "$HIHY_INSTALL_SUBSCRIPTION_DOMAIN" = sub.example.test ]
 (
     subscriptionProbe() { return 1; }
-    if printf '\n\n' | subscriptionOfferAfterInstall true false sub.example.test >"$TMP/rejected-tls.log" 2>&1; then exit 1; fi
+    if subscriptionApplyInstallChoice "$HIHY_INSTALL_SUBSCRIPTION_DOMAIN" </dev/null >"$TMP/rejected-tls.log" 2>&1; then exit 1; fi
 )
 ! systemctl is-active --quiet hihy-sub.service
 ! subscriptionEnabled
@@ -59,7 +61,7 @@ before_pointer=$(readlink "$HIHY_SUB_STATE/content/current" 2>/dev/null || true)
 [ "$(sha256sum "$HIHY_ROOT_DIR/conf/config.yaml")" = "$core_before" ]
 [ "$(find "$HIHY_SUB_STATE/content/generations" -mindepth 1 -maxdepth 1 -type d | wc -l)" -le 1 ]
 printf 'PASS: failed HTTPS activation restores the stopped endpoint and running core\n'
-if ! printf '\n\n' | subscriptionOfferAfterInstall false true sub.example.test >"$TMP/enable.log" 2>&1; then sed -E 's/[0-9a-f]{64}/[redacted]/g' "$TMP/enable.log"; exit 1; fi
+if ! subscriptionApplyInstallChoice "$HIHY_INSTALL_SUBSCRIPTION_DOMAIN" </dev/null >"$TMP/enable.log" 2>&1; then sed -E 's/[0-9a-f]{64}/[redacted]/g' "$TMP/enable.log"; exit 1; fi
 [ "$(systemctl show -p User --value hihy-sub.service)" = hihy-sub ]
 pid=$(systemctl show -p MainPID --value hihy-sub.service)
 [ "$(ps -o user= -p "$pid" | tr -d ' ')" = hihy-sub ]

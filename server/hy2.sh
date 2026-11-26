@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.23-secure.1"
+hihyV="ver1.23-secure.2"
 # GENERATED FILE — edit server/src/ and run bash scripts/build.sh.
 umask 077
 
@@ -728,6 +728,7 @@ messageTemplate() {
         sub_install_domain_optional) printf '%s' '自己的订阅域名（需直连解析并开放 TCP 443；留空跳过）：' ;;
         sub_install_choice_invalid) printf '%s' '请输入 y 或 n，直接回车表示启用。' ;;
         sub_install_failed) printf '%s' 'Hysteria 已安装；HTTPS 订阅未启用，可在菜单 17 重试。' ;;
+        sub_install_skipped) printf '%s' '已跳过 HTTPS 订阅设置，可稍后在菜单 17 配置。' ;;
         *) printf '未知提示：%s' "${1:-}"; return 1 ;;
     esac
 }
@@ -2165,6 +2166,12 @@ collectHysteriaConfig() {
         echoColor purple "\n\n->$(msg acme_summary)$(echoColor red "${domain}")\n"
     fi
 
+    if [ "${1:-}" = install ]; then
+        if ! subscriptionCollectInstallChoice "$useAcme" "$useLocalCert" "$domain"; then
+            printf '%s\n' "$(msg sub_install_skipped)" >&2
+        fi
+    fi
+
     if [ "${realmMode}" == "true" ]; then
         port=""
         echoColor purple "\n->$(msg realm_skip_port)\n"
@@ -3025,7 +3032,7 @@ generateStagedConfig() {
 
 setHysteriaConfig() {
     setConfigDefaults
-    collectHysteriaConfig || return 1
+    collectHysteriaConfig "${1:-}" || return 1
     writeHysteriaConfig
 }
 
@@ -3665,6 +3672,7 @@ EOF
 
 install() {
     local mode="${1:-}"
+    local HIHY_INSTALL_SUBSCRIPTION_DOMAIN=""
     local install_state
     install_state=$(classifyInstallState)
 
@@ -3698,7 +3706,7 @@ install() {
     if [ "$mode" = "auto" ]; then
         autoHysteriaConfig || return 1
     else
-        setHysteriaConfig || return 1
+        setHysteriaConfig install || return 1
     fi
 
     # 写入服务脚本并启动(独立函数,重新配置时也会刷新服务脚本)
@@ -3724,7 +3732,7 @@ install() {
     generate_client_config || return 1
     echoColor yellowBlack "$(msg install_done)"
     if [ "$mode" != auto ]; then
-        if ! subscriptionOfferAfterInstall "${useAcme:-false}" "${useLocalCert:-false}" "${domain:-}"; then
+        if ! subscriptionApplyInstallChoice "$HIHY_INSTALL_SUBSCRIPTION_DOMAIN"; then
             printf '%s\n' "$(msg sub_install_failed)" >&2
         fi
     fi
@@ -4987,11 +4995,15 @@ subscriptionFirewall() {
 subscriptionFirewallRestore() { subscriptionOwned && subscriptionFirewall restore; }
 subscriptionUnitOwned() { [ -f "$HIHY_SUB_UNIT" ] && [ ! -L "$HIHY_SUB_UNIT" ] && grep -Fxq '# Managed-by: hihy-subscription-v1' "$HIHY_SUB_UNIT"; }
 
-subscriptionCheckPlatform() {
+subscriptionCheckHost() {
     [ "$(id -u)" = 0 ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null || { subscriptionError sub_platform; return 1; }
     grep -Eq '^ID=(debian|ubuntu|"debian"|"ubuntu")$' /etc/os-release || { subscriptionError sub_platform; return 1; }
-    [ -s "$HIHY_ROOT_DIR/conf/config.yaml" ] && [ -s "$HIHY_ROOT_DIR/conf/backup.yaml" ] || { subscriptionError sub_need_install; return 1; }
     subscriptionValidatePaths || return 1
+}
+
+subscriptionCheckPlatform() {
+    subscriptionCheckHost || return 1
+    [ -s "$HIHY_ROOT_DIR/conf/config.yaml" ] && [ -s "$HIHY_ROOT_DIR/conf/backup.yaml" ] || { subscriptionError sub_need_install; return 1; }
 }
 
 # DNS must resolve before the local, publicly trusted TLS readiness check can succeed.
@@ -5283,12 +5295,13 @@ subscriptionConfirmInstall() {
     done
 }
 
-# 为首次交互安装收集独立订阅域名，复用已保存的订阅启用流程。
-subscriptionOfferAfterInstall() {
+# 在证书和域名选择后收集订阅选项，只保留本次安装会话的选择。
+subscriptionCollectInstallChoice() {
     local acme="${1:-false}" local_cert_mode="${2:-false}" candidate="${3:-}"
     local subscription_domain="" entered=""
+    HIHY_INSTALL_SUBSCRIPTION_DOMAIN=""
     subscriptionEnabled && return 0
-    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
+    subscriptionCheckHost && subscriptionCheckPort || return 1
     if { [ "$acme" = true ] || [ "$local_cert_mode" = true ]; } && subscriptionValidDomain "$candidate"; then
         subscriptionConfirmInstall || return 0
         while true; do
@@ -5308,6 +5321,16 @@ subscriptionOfferAfterInstall() {
         done
         subscriptionConfirmInstall || return 0
     fi
+    HIHY_INSTALL_SUBSCRIPTION_DOMAIN="$subscription_domain"
+}
+
+# 核心启动后应用此前收集的选择；此阶段不再读取交互输入。
+subscriptionApplyInstallChoice() {
+    local subscription_domain="${1:-}"
+    [ -n "$subscription_domain" ] || return 0
+    subscriptionEnabled && return 0
+    subscriptionValidDomain "$subscription_domain" || return 1
+    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
     subscriptionEnable "$subscription_domain"
 }
 

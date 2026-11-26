@@ -11,11 +11,15 @@ subscriptionFirewall() {
 subscriptionFirewallRestore() { subscriptionOwned && subscriptionFirewall restore; }
 subscriptionUnitOwned() { [ -f "$HIHY_SUB_UNIT" ] && [ ! -L "$HIHY_SUB_UNIT" ] && grep -Fxq '# Managed-by: hihy-subscription-v1' "$HIHY_SUB_UNIT"; }
 
-subscriptionCheckPlatform() {
+subscriptionCheckHost() {
     [ "$(id -u)" = 0 ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null || { subscriptionError sub_platform; return 1; }
     grep -Eq '^ID=(debian|ubuntu|"debian"|"ubuntu")$' /etc/os-release || { subscriptionError sub_platform; return 1; }
-    [ -s "$HIHY_ROOT_DIR/conf/config.yaml" ] && [ -s "$HIHY_ROOT_DIR/conf/backup.yaml" ] || { subscriptionError sub_need_install; return 1; }
     subscriptionValidatePaths || return 1
+}
+
+subscriptionCheckPlatform() {
+    subscriptionCheckHost || return 1
+    [ -s "$HIHY_ROOT_DIR/conf/config.yaml" ] && [ -s "$HIHY_ROOT_DIR/conf/backup.yaml" ] || { subscriptionError sub_need_install; return 1; }
 }
 
 # DNS must resolve before the local, publicly trusted TLS readiness check can succeed.
@@ -307,12 +311,13 @@ subscriptionConfirmInstall() {
     done
 }
 
-# 为首次交互安装收集独立订阅域名，复用已保存的订阅启用流程。
-subscriptionOfferAfterInstall() {
+# 在证书和域名选择后收集订阅选项，只保留本次安装会话的选择。
+subscriptionCollectInstallChoice() {
     local acme="${1:-false}" local_cert_mode="${2:-false}" candidate="${3:-}"
     local subscription_domain="" entered=""
+    HIHY_INSTALL_SUBSCRIPTION_DOMAIN=""
     subscriptionEnabled && return 0
-    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
+    subscriptionCheckHost && subscriptionCheckPort || return 1
     if { [ "$acme" = true ] || [ "$local_cert_mode" = true ]; } && subscriptionValidDomain "$candidate"; then
         subscriptionConfirmInstall || return 0
         while true; do
@@ -332,6 +337,16 @@ subscriptionOfferAfterInstall() {
         done
         subscriptionConfirmInstall || return 0
     fi
+    HIHY_INSTALL_SUBSCRIPTION_DOMAIN="$subscription_domain"
+}
+
+# 核心启动后应用此前收集的选择；此阶段不再读取交互输入。
+subscriptionApplyInstallChoice() {
+    local subscription_domain="${1:-}"
+    [ -n "$subscription_domain" ] || return 0
+    subscriptionEnabled && return 0
+    subscriptionValidDomain "$subscription_domain" || return 1
+    subscriptionCheckPlatform && subscriptionCheckCompatibility "$HIHY_ROOT_DIR" && subscriptionCheckPort || return 1
     subscriptionEnable "$subscription_domain"
 }
 

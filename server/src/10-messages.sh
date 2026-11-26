@@ -576,6 +576,7 @@ messageTemplate() {
         sub_install_domain_optional) printf '%s' '自己的订阅域名（需直连解析并开放 TCP 443；留空跳过）：' ;;
         sub_install_choice_invalid) printf '%s' '请输入 y 或 n，直接回车表示启用。' ;;
         sub_install_failed) printf '%s' 'Hysteria 已安装；HTTPS 订阅未启用，可在菜单 17 重试。' ;;
+        sub_install_skipped) printf '%s' '已跳过 HTTPS 订阅设置，可稍后在菜单 17 配置。' ;;
         *) printf '未知提示：%s' "${1:-}"; return 1 ;;
     esac
 }

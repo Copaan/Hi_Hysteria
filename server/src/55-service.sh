@@ -282,6 +282,7 @@ EOF
 
 install() {
     local mode="${1:-}"
+    local HIHY_INSTALL_SUBSCRIPTION_DOMAIN=""
     local install_state
     install_state=$(classifyInstallState)
 
@@ -315,7 +316,7 @@ install() {
     if [ "$mode" = "auto" ]; then
         autoHysteriaConfig || return 1
     else
-        setHysteriaConfig || return 1
+        setHysteriaConfig install || return 1
     fi
 
     # 写入服务脚本并启动(独立函数,重新配置时也会刷新服务脚本)
@@ -341,7 +342,7 @@ install() {
     generate_client_config || return 1
     echoColor yellowBlack "$(msg install_done)"
     if [ "$mode" != auto ]; then
-        if ! subscriptionOfferAfterInstall "${useAcme:-false}" "${useLocalCert:-false}" "${domain:-}"; then
+        if ! subscriptionApplyInstallChoice "$HIHY_INSTALL_SUBSCRIPTION_DOMAIN"; then
             printf '%s\n' "$(msg sub_install_failed)" >&2
         fi
     fi

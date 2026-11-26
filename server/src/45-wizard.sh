@@ -460,6 +460,12 @@ collectHysteriaConfig() {
         echoColor purple "\n\n->$(msg acme_summary)$(echoColor red "${domain}")\n"
     fi
 
+    if [ "${1:-}" = install ]; then
+        if ! subscriptionCollectInstallChoice "$useAcme" "$useLocalCert" "$domain"; then
+            printf '%s\n' "$(msg sub_install_skipped)" >&2
+        fi
+    fi
+
     if [ "${realmMode}" == "true" ]; then
         port=""
         echoColor purple "\n->$(msg realm_skip_port)\n"
@@ -1320,6 +1326,6 @@ generateStagedConfig() {
 
 setHysteriaConfig() {
     setConfigDefaults
-    collectHysteriaConfig || return 1
+    collectHysteriaConfig "${1:-}" || return 1
     writeHysteriaConfig
 }

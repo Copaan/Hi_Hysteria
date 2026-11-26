@@ -231,13 +231,13 @@ subscriptionEnable() {
         return
     fi
     [ -n "$domain" ] || domain=$(subscriptionRead domain '')
-    [ -n "$domain" ] || read -r -p "$(i18n sub_domain_prompt)" domain
+    [ -n "$domain" ] || read -r -p "$(msg sub_domain_prompt)" domain
     domain="${domain,,}"
     subscriptionCheckDomain "$domain" && subscriptionCheckPort || return 1
     subscriptionPreparePaths && subscriptionInstallCaddy || return 1
     token=$(subscriptionRead token '')
     subscriptionValidToken "$token" || token=$(openssl rand -hex 32) || return 1
-    printf '%s\n' "$(i18n sub_enabling)"
+    printf '%s\n' "$(msg sub_enabling)"
     subscriptionApplyEndpoint "$domain" "$token" || return 1
     subscriptionShow
 }
@@ -248,17 +248,17 @@ subscriptionShow() {
     domain=$(subscriptionRead domain); token=$(subscriptionRead token)
     subscriptionValidDomain "$domain" && subscriptionValidToken "$token" || return 1
     url="https://$domain/s/$token"
-    printf '%s\n%s\n' "$(i18n sub_link)" "$url"
-    printf '%s\n' "$(i18n sub_v2rayn_hint)" "$(i18n sub_formats_hint)"
+    printf '%s\n%s\n' "$(msg sub_link)" "$url"
+    printf '%s\n' "$(msg sub_v2rayn_hint)" "$(msg sub_formats_hint)"
     for format in hysteria mihomo singbox; do printf '%s?format=%s\n' "$url" "$format"; done
     printf 'sing-box://import-remote-profile?url=%s#HiHysteria\n' "$(urlEncode "$url")"
-    printf '%s\n' "$(i18n sub_secret_hint)"
+    printf '%s\n' "$(msg sub_secret_hint)"
 }
 
 subscriptionStatus() {
-    if ! subscriptionOwned; then printf '%s\n' "$(i18n sub_not_enabled)"; return 0; fi
-    printf '%s: %s\n' "$(i18n sub_domain_label)" "$(subscriptionRead domain '-')"
-    printf '%s: %s\n' "$(i18n sub_enabled_label)" "$(subscriptionRead enabled false)"
+    if ! subscriptionOwned; then printf '%s\n' "$(msg sub_not_enabled)"; return 0; fi
+    printf '%s: %s\n' "$(msg sub_domain_label)" "$(subscriptionRead domain '-')"
+    printf '%s: %s\n' "$(msg sub_enabled_label)" "$(subscriptionRead enabled false)"
     systemctl is-active hihy-sub.service || true
 }
 
@@ -270,14 +270,14 @@ subscriptionDisable() {
     fi
     subscriptionFirewall remove || return 1
     addOrUpdateYaml "$HIHY_SUB_ETC/state.yaml" enabled false bool || return 1
-    printf '%s\n' "$(i18n sub_disabled)"
+    printf '%s\n' "$(msg sub_disabled)"
 }
 
 subscriptionRotateToken() {
     subscriptionEnabled || { subscriptionError sub_not_enabled; return 1; }
     subscriptionCheckPlatform && subscriptionInstallCaddy || return 1
     subscriptionApplyEndpoint "$(subscriptionRead domain)" "$(openssl rand -hex 32)" || return 1
-    printf '%s\n' "$(i18n sub_rotation_hint)"
+    printf '%s\n' "$(msg sub_rotation_hint)"
     subscriptionShow
 }
 
@@ -296,8 +296,8 @@ subscriptionUninstall() {
 
 subscriptionMenu() {
     local choice
-    printf '%s\n' "$(i18n sub_menu_choices)"
-    read -r -p "$(i18n menu_prompt_choice)" choice || return 1
+    printf '%s\n' "$(msg sub_menu_choices)"
+    read -r -p "$(msg menu_prompt_choice)" choice || return 1
     case "$choice" in
         1) subscriptionEnable ;;
         2) subscriptionStatus ;;

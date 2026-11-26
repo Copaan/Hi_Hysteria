@@ -27,13 +27,13 @@ print_table_row() {
 format_bytes() {
     local bytes=$1
     if [ $bytes -lt 1024 ]; then
-        echo "$(i18n unit_bytes ${bytes})"
+        echo "$(msg unit_bytes ${bytes})"
     elif [ $bytes -lt $((1024 * 1024)) ]; then
-        echo "$(i18n unit_kilobytes $(echo "scale=2; $bytes/1024" | bc))"
+        echo "$(msg unit_kilobytes $(echo "scale=2; $bytes/1024" | bc))"
     elif [ $bytes -lt $((1024 * 1024 * 1024)) ]; then
-        echo "$(i18n unit_megabytes $(echo "scale=2; $bytes/(1024*1024)" | bc))"
+        echo "$(msg unit_megabytes $(echo "scale=2; $bytes/(1024*1024)" | bc))"
     else
-        echo "$(i18n unit_gigabytes $(echo "scale=2; $bytes/(1024*1024*1024)" | bc))"
+        echo "$(msg unit_gigabytes $(echo "scale=2; $bytes/(1024*1024*1024)" | bc))"
     fi
 }
 
@@ -43,7 +43,7 @@ getHysteriaTrafic() (
 
     # 未安装/配置缺失时 trafficPort 拿不到,直接报错而不是对着乱值发请求
     if ! isPositiveInt "${api_port}"; then
-        echoColor red "$(i18n config_file_not_found)"
+        echoColor red "$(msg config_file_not_found)"
         return 1
     fi
 
@@ -58,10 +58,10 @@ getHysteriaTrafic() (
         CURL_OPTS=()
     fi
 
-    echo "$(i18n traffic_server_status_title)"
+    echo "$(msg traffic_server_status_title)"
 
     # 流量统计部分保持不变
-    echoColor green "$(i18n traffic_stats_label)"
+    echoColor green "$(msg traffic_stats_label)"
     # 用 yq 解析(脚本硬依赖):grep 正则对 JSON 的 { 转义/空白格式差异太脆弱,401/HTML 响应会被静默吞掉
     local traffic_resp traffic_out
     traffic_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/traffic") || return 1
@@ -71,46 +71,46 @@ getHysteriaTrafic() (
             while IFS=$'\t' read -r user tx rx; do
                 tx_formatted=$(format_bytes "${tx}")
                 rx_formatted=$(format_bytes "${rx}")
-                # 模板占位符必须由 i18n 消费(外层 printf 再展开会把 %s 提前吞掉)
-                printf '%s\n' "$(i18n traffic_stats_row "$user" "$tx_formatted" "$rx_formatted")"
+                # 模板占位符必须由 msg 消费(外层 printf 再展开会把 %s 提前吞掉)
+                printf '%s\n' "$(msg traffic_stats_row "$user" "$tx_formatted" "$rx_formatted")"
             done <<<"${traffic_out}"
         else
-            echoColor red "$(i18n traffic_api_error "${traffic_resp}")"
+            echoColor red "$(msg traffic_api_error "${traffic_resp}")"
         fi
     fi
 
     # 在线用户部分保持不变
-    echoColor green "\n$(i18n traffic_online_users_label)"
+    echoColor green "\n$(msg traffic_online_users_label)"
     local online_resp online_out
     online_resp=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" "http://127.0.0.1:${api_port}/online") || return 1
     if [ -n "${online_resp}" ]; then
         online_out=$(printf '%s' "${online_resp}" | yq -p json -o tsv 'to_entries[] | [.key, .value] | @tsv' 2>/dev/null)
         if [ -n "${online_out}" ]; then
             while IFS=$'\t' read -r user count; do
-                printf '%s\n' "$(i18n traffic_online_users_row "$user" "$count")"
+                printf '%s\n' "$(msg traffic_online_users_row "$user" "$count")"
             done <<<"${online_out}"
         else
-            echoColor red "$(i18n traffic_api_error "${online_resp}")"
+            echoColor red "$(msg traffic_api_error "${online_resp}")"
         fi
     fi
 
-    echoColor green "\n$(i18n traffic_active_connections_label)"
+    echoColor green "\n$(msg traffic_active_connections_label)"
     STREAMS_OUTPUT=$(curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "${CURL_OPTS[@]}" -H "Accept: text/plain" "http://127.0.0.1:${api_port}/dump/streams") || return 1
 
     if [ "$(echo "$STREAMS_OUTPUT" | wc -l)" -le 1 ]; then
-        echo "$(i18n traffic_no_active_connections)"
+        echo "$(msg traffic_no_active_connections)"
     else
         # 打印表头
         local _h_state _h_user _h_conn_id _h_flows _h_up _h_down _h_alive _h_last_active _h_target_addr
-        _h_state="$(i18n traffic_header_state)"
-        _h_user="$(i18n traffic_header_user)"
-        _h_conn_id="$(i18n traffic_header_conn_id)"
-        _h_flows="$(i18n traffic_header_flows)"
-        _h_up="$(i18n traffic_header_upload)"
-        _h_down="$(i18n traffic_header_download)"
-        _h_alive="$(i18n traffic_header_alive_time)"
-        _h_last_active="$(i18n traffic_header_last_active)"
-        _h_target_addr="$(i18n traffic_header_target_address)"
+        _h_state="$(msg traffic_header_state)"
+        _h_user="$(msg traffic_header_user)"
+        _h_conn_id="$(msg traffic_header_conn_id)"
+        _h_flows="$(msg traffic_header_flows)"
+        _h_up="$(msg traffic_header_upload)"
+        _h_down="$(msg traffic_header_download)"
+        _h_alive="$(msg traffic_header_alive_time)"
+        _h_last_active="$(msg traffic_header_last_active)"
+        _h_target_addr="$(msg traffic_header_target_address)"
         print_table_row "$_h_state" "$_h_user" "$_h_conn_id" "$_h_flows" "$_h_up" "$_h_down" "$_h_alive" "$_h_last_active" "$_h_target_addr"
         echo "------|----------------|--------|-----|---------|---------|--------|--------|----------------------"
 
@@ -118,16 +118,16 @@ getHysteriaTrafic() (
         temp_file="$header_dir/streams"
 
         echo "$STREAMS_OUTPUT" | awk \
-            -v estab="$(i18n traffic_status_estab)" \
-            -v closed="$(i18n traffic_status_closed)" \
-            -v byte_suffix="$(i18n unit_byte_literal)" \
-            -v kb_suffix="$(i18n unit_kilobyte_literal)" \
-            -v mb_suffix="$(i18n unit_megabyte_literal)" \
-            -v gb_suffix="$(i18n unit_gigabyte_literal)" \
-            -v ms_suffix="$(i18n unit_millisecond_literal)" \
-            -v s_suffix="$(i18n unit_second_literal)" \
-            -v m_suffix="$(i18n unit_minute_literal)" \
-            -v h_suffix="$(i18n unit_hour_literal)" \
+            -v estab="$(msg traffic_status_estab)" \
+            -v closed="$(msg traffic_status_closed)" \
+            -v byte_suffix="$(msg unit_byte_literal)" \
+            -v kb_suffix="$(msg unit_kilobyte_literal)" \
+            -v mb_suffix="$(msg unit_megabyte_literal)" \
+            -v gb_suffix="$(msg unit_gigabyte_literal)" \
+            -v ms_suffix="$(msg unit_millisecond_literal)" \
+            -v s_suffix="$(msg unit_second_literal)" \
+            -v m_suffix="$(msg unit_minute_literal)" \
+            -v h_suffix="$(msg unit_hour_literal)" \
             'BEGIN {
             status["ESTAB"]=estab
             status["CLOSED"]=closed
@@ -188,7 +188,7 @@ getHysteriaTrafic() (
         rm -f "$temp_file"
     fi
 
-    echo "$(i18n traffic_separator_line)"
+    echo "$(msg traffic_separator_line)"
 )
 
 # 辅助函数：格式化时间显示
@@ -197,20 +197,20 @@ format_time_display() {
 
     # 处理毫秒级别
     if (($(echo "$seconds < 1" | bc -l))); then
-        printf "$(i18n unit_milliseconds $(echo "$seconds * 1000" | bc -l))"
+        printf "$(msg unit_milliseconds $(echo "$seconds * 1000" | bc -l))"
         return
     fi
 
     # 处理秒级别
     if (($(echo "$seconds < 60" | bc -l))); then
-        printf "$(i18n unit_seconds $seconds)"
+        printf "$(msg unit_seconds $seconds)"
         return
     fi
 
     # 处理分钟级别
     if (($(echo "$seconds < 3600" | bc -l))); then
         local minutes=$(echo "$seconds / 60" | bc -l)
-        printf "$(i18n unit_minutes $minutes)"
+        printf "$(msg unit_minutes $minutes)"
         return
     fi
 
@@ -219,9 +219,9 @@ format_time_display() {
     # 如果小时数小于0.1，显示为分钟
     if (($(echo "$hours < 0.1" | bc -l))); then
         local minutes=$(echo "$seconds / 60" | bc -l)
-        printf "$(i18n unit_minutes $minutes)"
+        printf "$(msg unit_minutes $minutes)"
     else
-        printf "$(i18n unit_hours $hours)"
+        printf "$(msg unit_hours $hours)"
     fi
 }
 

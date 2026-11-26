@@ -22,7 +22,7 @@ installHihyLauncher() {
             return 1
         }
     elif [ ! -f "$bin_link" ]; then
-        securityError 'Local hihy script is missing; reinstall the complete reviewed package.'
+        securityError '本地主程序缺失，请重新下载 install.sh。'
         return 1
     fi
 
@@ -38,7 +38,7 @@ downloadToFile() (
     local url="$1"
     local output_path="$2"
     local attempt temp
-    [[ "$url" == https://* ]] || { securityError 'Only HTTPS downloads are allowed.'; return 1; }
+    [[ "$url" == https://* ]] || { securityError '下载地址必须使用 HTTPS。'; return 1; }
     [ ! -L "$output_path" ] || return 1
     temp=$(mktemp "$(dirname "$output_path")/.download.XXXXXXXX") || return 1
     trap 'rm -f -- "$temp"' EXIT
@@ -64,7 +64,7 @@ downloadVerifiedFile() (
         if [ "$actual" = "$expected" ]; then
             mv -f -- "$temp" "$dest" && return 0
         fi
-        securityError 'SHA256 verification failed.'
+        securityError 'SHA256 校验失败。'
     fi
     rm -f -- "$temp"
     return 1

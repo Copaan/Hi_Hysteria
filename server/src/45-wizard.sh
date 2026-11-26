@@ -86,41 +86,41 @@ setConfigDefaults() {
 
 # ---------- 交互式配置收集(原 setHysteriaConfig 前半段,只读输入、只设变量) ----------
 collectHysteriaConfig() {
-    echoColor yellowBlack "$(i18n config_start_title)"
-    echoColor green "$(i18n realm_prompt_title)"
-    echo -e "$(i18n realm_intro_line1)"
-    echo -e "$(i18n realm_intro_line2)"
-    echo -e "$(i18n realm_intro_line3)"
-    echo -e "$(i18n realm_intro_line4)"
-    echoColor yellow "$(i18n realm_warning_core_only)"
-    echoColor yellow "$(i18n realm_choice_disable_default)"
-    echoColor yellow "$(i18n realm_choice_enable)"
-    echoColor green "$(i18n prompt_enter_number)"
+    echoColor yellowBlack "$(msg config_start_title)"
+    echoColor green "$(msg realm_prompt_title)"
+    echo -e "$(msg realm_intro_line1)"
+    echo -e "$(msg realm_intro_line2)"
+    echo -e "$(msg realm_intro_line3)"
+    echo -e "$(msg realm_intro_line4)"
+    echoColor yellow "$(msg realm_warning_core_only)"
+    echoColor yellow "$(msg realm_choice_disable_default)"
+    echoColor yellow "$(msg realm_choice_enable)"
+    echoColor green "$(msg prompt_enter_number)"
     read -r realmChoice
     if [ -z "${realmChoice}" ] || [ "${realmChoice}" == "1" ]; then
         realmMode="false"
     else
         realmMode="true"
         realmName=$(generate_uuid)
-        echo -e "\n->$(i18n realm_name_label)$(echoColor red "${realmName}")\n"
-        echoColor green "$(i18n realm_server_prompt)"
-        echo -e "$(i18n realm_server_official_hint)"
-        echoColor yellow "$(i18n realm_server_choice_official)"
-        echoColor yellow "$(i18n realm_server_choice_custom)"
-        echoColor green "$(i18n prompt_enter_number)"
+        echo -e "\n->$(msg realm_name_label)$(echoColor red "${realmName}")\n"
+        echoColor green "$(msg realm_server_prompt)"
+        echo -e "$(msg realm_server_official_hint)"
+        echoColor yellow "$(msg realm_server_choice_official)"
+        echoColor yellow "$(msg realm_server_choice_custom)"
+        echoColor green "$(msg prompt_enter_number)"
         read -r realmServerChoice
         if [ -z "${realmServerChoice}" ] || [ "${realmServerChoice}" == "1" ]; then
             realmAddress="realm.hy2.io"
             realmPassword="public"
         else
-            echoColor green "$(i18n realm_address_prompt)"
+            echoColor green "$(msg realm_address_prompt)"
             read -r realmAddressInput
             while [ -z "${realmAddressInput}" ]; do
-                echoColor red "$(i18n realm_address_empty)"
+                echoColor red "$(msg realm_address_empty)"
                 read -r realmAddressInput
             done
             realmAddress="${realmAddressInput}"
-            echoColor green "$(i18n realm_password_prompt)"
+            echoColor green "$(msg realm_password_prompt)"
             read -r realmPasswordInput
             if [ -z "${realmPasswordInput}" ]; then
                 realmPassword="public"
@@ -129,130 +129,130 @@ collectHysteriaConfig() {
             fi
         fi
         realmURI="realm://$(urlEncode "$realmPassword")@${realmAddress}/$(urlEncode "$realmName")"
-        echo -e "\n->$(i18n realm_uri_label)$(echoColor red "${realmURI}")\n"
+        echo -e "\n->$(msg realm_uri_label)$(echoColor red "${realmURI}")\n"
         if command -v warp >/dev/null 2>&1 && [ -f "/etc/wireguard/warp.conf" ]; then
-            echoColor purple "$(i18n warp_installed_hint)"
+            echoColor purple "$(msg warp_installed_hint)"
         fi
-        echoColor green "$(i18n warp_install_prompt)"
-        echoColor white "$(i18n warp_principle_line1)"
-        echoColor white "$(i18n warp_principle_line2)"
-        echoColor white "$(i18n warp_principle_line3)"
-        echoColor white "$(i18n warp_principle_line4)"
-        echoColor yellow "$(i18n warp_choice_skip)"
-        echoColor yellow "$(i18n warp_choice_install)"
-        echoColor green "$(i18n prompt_enter_number)"
+        echoColor green "$(msg warp_install_prompt)"
+        echoColor white "$(msg warp_principle_line1)"
+        echoColor white "$(msg warp_principle_line2)"
+        echoColor white "$(msg warp_principle_line3)"
+        echoColor white "$(msg warp_principle_line4)"
+        echoColor yellow "$(msg warp_choice_skip)"
+        echoColor yellow "$(msg warp_choice_install)"
+        echoColor green "$(msg prompt_enter_number)"
         read -r warpChoice
         if [ "${warpChoice}" == "2" ]; then
-            echoColor purple "$(i18n warp_installing)"
-            echoColor purple "$(i18n warp_select_global_mode)"
+            echoColor purple "$(msg warp_installing)"
+            echoColor purple "$(msg warp_select_global_mode)"
             installWarpVerified d || return 1
             if [ -f "/etc/wireguard/warp.conf" ]; then
                 current_mtu=$(grep -oP '^MTU = \K\d+' /etc/wireguard/warp.conf)
                 if [ -n "${current_mtu}" ] && [ "${current_mtu}" -lt 1320 ]; then
                     sed -i "s/^MTU = ${current_mtu}/MTU = 1320/g" /etc/wireguard/warp.conf
-                    echoColor purple "\n->$(i18n warp_mtu_adjusted ${current_mtu})"
+                    echoColor purple "\n->$(msg warp_mtu_adjusted ${current_mtu})"
                 elif [ -n "${current_mtu}" ]; then
-                    echoColor purple "\n->$(i18n warp_mtu_no_adjust ${current_mtu})"
+                    echoColor purple "\n->$(msg warp_mtu_no_adjust ${current_mtu})"
                 fi
-                echoColor purple "$(i18n warp_enabling)"
+                echoColor purple "$(msg warp_enabling)"
                 warp o
                 sleep 3
-                echoColor purple "$(i18n warp_reenabling)"
+                echoColor purple "$(msg warp_reenabling)"
                 warp o
-                echoColor purple "$(i18n warp_install_done)"
+                echoColor purple "$(msg warp_install_done)"
             else
-                echoColor red "$(i18n warp_install_fail)"
-                echoColor red "$(i18n warp_manual_cmd)"
-                echoColor red "$(i18n warp_install_fail_exit)"
+                echoColor red "$(msg warp_install_fail)"
+                echoColor red "$(msg warp_manual_cmd)"
+                echoColor red "$(msg warp_install_fail_exit)"
                 exit 1
             fi
         else
-            echoColor purple "$(i18n warp_skip)"
+            echoColor purple "$(msg warp_skip)"
         fi
     fi
-    echoColor green "$(i18n cert_prompt_title)"
-    echoColor yellow "$(i18n cert_choice_acme)"
-    echoColor yellow "$(i18n cert_choice_local)"
-    echoColor yellow "$(i18n cert_choice_selfsigned)"
-    echoColor yellow "$(i18n cert_choice_dns)"
-    echoColor green "$(i18n prompt_enter_number_or_default)"
+    echoColor green "$(msg cert_prompt_title)"
+    echoColor yellow "$(msg cert_choice_acme)"
+    echoColor yellow "$(msg cert_choice_local)"
+    echoColor yellow "$(msg cert_choice_selfsigned)"
+    echoColor yellow "$(msg cert_choice_dns)"
+    echoColor green "$(msg prompt_enter_number_or_default)"
     read -r certNum
     useAcme=false
     useLocalCert=false
 
     if [ -z "${certNum}" ] || [ "${certNum}" == "3" ]; then
-        echoColor green "$(i18n selfsigned_domain_prompt)"
+        echoColor green "$(msg selfsigned_domain_prompt)"
         read -r domain
         if [ -z "${domain}" ]; then
             domain="helloworld.com"
         fi
-        echo -e "->$(i18n selfsigned_domain_label)$(echoColor red "${domain}")\n"
+        echo -e "->$(msg selfsigned_domain_label)$(echoColor red "${domain}")\n"
         if [ "${realmMode}" == "true" ]; then
             ip=""
-            echo -e "\n->$(i18n realm_uri_label_with_cert)$(echoColor red "${realmURI}")\n"
+            echo -e "\n->$(msg realm_uri_label_with_cert)$(echoColor red "${realmURI}")\n"
         else
             ip=$(detectPublicIP || true)
-            echoColor green "$(i18n public_ip_check)$(echoColor red "${ip}")\n"
+            echoColor green "$(msg public_ip_check)$(echoColor red "${ip}")\n"
             while true; do
-                echoColor green "$(i18n prompt_choose)"
-                echoColor yellow "$(i18n ip_correct_default)"
-                echoColor yellow "$(i18n ip_incorrect)"
-                echoColor green "$(i18n prompt_enter_number)"
+                echoColor green "$(msg prompt_choose)"
+                echoColor yellow "$(msg ip_correct_default)"
+                echoColor yellow "$(msg ip_incorrect)"
+                echoColor green "$(msg prompt_enter_number)"
                 read -r ipNum
                 if [ -z "${ipNum}" ] || [ "${ipNum}" == "1" ]; then
                     break
                 elif [ "${ipNum}" == "2" ]; then
-                    echoColor green "$(i18n ip_prompt)"
+                    echoColor green "$(msg ip_prompt)"
                     read -r ip
                     if [ -z "${ip}" ]; then
-                        echoColor red "$(i18n input_error_retry)"
+                        echoColor red "$(msg input_error_retry)"
                         continue
                     fi
                     break
                 else
-                    echoColor red "$(i18n input_error_please_retry)"
+                    echoColor red "$(msg input_error_please_retry)"
                 fi
             done
         fi
         useAcme=false
         if [ "${realmMode}" == "true" ]; then
-            echoColor purple "\n\n->$(i18n selfsigned_cert_summary_realm ${domain})$(echoColor red "${realmURI}")\n"
+            echoColor purple "\n\n->$(msg selfsigned_cert_summary_realm ${domain})$(echoColor red "${realmURI}")\n"
         else
-            echoColor purple "\n\n->$(i18n selfsigned_cert_summary_ip ${domain})$(echoColor red "${ip}")\n"
+            echoColor purple "\n\n->$(msg selfsigned_cert_summary_ip ${domain})$(echoColor red "${ip}")\n"
         fi
         echo -e "\n"
 
     elif [ "${certNum}" == "2" ]; then
-        echoColor green "$(i18n local_cert_path_prompt)"
+        echoColor green "$(msg local_cert_path_prompt)"
         read -r local_cert
         while :; do
             if [ ! -f "${local_cert}" ]; then
-                echoColor red "\n\n->$(i18n path_not_exist)"
-                echoColor green "$(i18n local_cert_path_prompt)"
+                echoColor red "\n\n->$(msg path_not_exist)"
+                echoColor green "$(msg local_cert_path_prompt)"
                 read -r local_cert
             else
                 break
             fi
         done
-        echo -e "\n\n->$(i18n local_cert_label)$(echoColor red "${local_cert}")\n"
-        echoColor green "$(i18n local_key_path_prompt)"
+        echo -e "\n\n->$(msg local_cert_label)$(echoColor red "${local_cert}")\n"
+        echoColor green "$(msg local_key_path_prompt)"
         read -r local_key
         while :; do
             if [ ! -f "${local_key}" ]; then
-                echoColor red "\n\n->$(i18n path_not_exist)"
-                echoColor green "$(i18n local_key_path_prompt)"
+                echoColor red "\n\n->$(msg path_not_exist)"
+                echoColor green "$(msg local_key_path_prompt)"
                 read -r local_key
             else
                 break
             fi
         done
-        echo -e "\n\n->$(i18n local_key_label)$(echoColor red "${local_key}")\n"
-        echoColor green "$(i18n local_cert_domain_prompt)"
+        echo -e "\n\n->$(msg local_key_label)$(echoColor red "${local_key}")\n"
+        echoColor green "$(msg local_cert_domain_prompt)"
         read -r domain
         while :; do
             if [ -z "${domain}" ]; then
-                echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                echoColor green "$(i18n local_cert_domain_prompt)"
+                echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                echoColor green "$(msg local_cert_domain_prompt)"
                 read -r domain
             else
                 break
@@ -260,154 +260,154 @@ collectHysteriaConfig() {
         done
         useAcme=false
         useLocalCert=true
-        echoColor purple "\n\n->$(i18n local_cert_summary)$(echoColor red "${domain}")\n"
+        echoColor purple "\n\n->$(msg local_cert_summary)$(echoColor red "${domain}")\n"
     elif [ "${certNum}" == "4" ]; then
-        echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+        echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
         read -r domain
         while :; do
             if [ -z "${domain}" ]; then
-                echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+                echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
                 read -r domain
             else
                 break
             fi
         done
-        echo -e "\n\n->$(i18n domain_label)$(echoColor red "${domain}")\n"
-        echoColor green "$(i18n dns_provider_prompt)"
-        echoColor yellow "$(i18n dns_choice_cloudflare)"
-        echoColor yellow "$(i18n dns_choice_duckdns)"
-        echoColor yellow "$(i18n dns_choice_gandi)"
-        echoColor yellow "$(i18n dns_choice_godaddy)"
-        echoColor yellow "$(i18n dns_choice_vultr)"
-        echoColor green "$(i18n prompt_enter_number)"
+        echo -e "\n\n->$(msg domain_label)$(echoColor red "${domain}")\n"
+        echoColor green "$(msg dns_provider_prompt)"
+        echoColor yellow "$(msg dns_choice_cloudflare)"
+        echoColor yellow "$(msg dns_choice_duckdns)"
+        echoColor yellow "$(msg dns_choice_gandi)"
+        echoColor yellow "$(msg dns_choice_godaddy)"
+        echoColor yellow "$(msg dns_choice_vultr)"
+        echoColor green "$(msg prompt_enter_number)"
         read -r dnsNum
         if [ -z "${dnsNum}" ] || [ "${dnsNum}" == "1" ]; then
             dns="cloudflare"
-            echo -e "\n\n->$(i18n dns_selected_cloudflare)\n"
-            echoColor green "$(i18n cloudflare_token_prompt)"
+            echo -e "\n\n->$(msg dns_selected_cloudflare)\n"
+            echoColor green "$(msg cloudflare_token_prompt)"
             while :; do
                 read -r cloudflare_api_token
                 if [ -z "${cloudflare_api_token}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n cloudflare_token_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg cloudflare_token_prompt)"
                 else
                     break
                 fi
             done
         elif [ "${dnsNum}" == "2" ]; then
             dns="duckdns"
-            echo -e "\n\n->$(i18n dns_selected_duckdns)\n"
-            echoColor green "$(i18n duckdns_token_prompt)"
+            echo -e "\n\n->$(msg dns_selected_duckdns)\n"
+            echoColor green "$(msg duckdns_token_prompt)"
             while :; do
                 read -r duckdns_api_token
                 if [ -z "${duckdns_api_token}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n duckdns_token_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg duckdns_token_prompt)"
                 else
                     break
                 fi
             done
-            echoColor green "$(i18n duckdns_override_prompt)"
+            echoColor green "$(msg duckdns_override_prompt)"
             while :; do
                 read -r duckdns_override_domain
                 if [ -z "${duckdns_override_domain}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n duckdns_override_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg duckdns_override_prompt)"
                 else
                     break
                 fi
             done
         elif [ "${dnsNum}" == "3" ]; then
             dns="gandi"
-            echo -e "\n\n->$(i18n dns_selected_gandi)\n"
-            echoColor green "$(i18n gandi_token_prompt)"
+            echo -e "\n\n->$(msg dns_selected_gandi)\n"
+            echoColor green "$(msg gandi_token_prompt)"
             while :; do
                 read -r gandi_api_token
                 if [ -z "${gandi_api_token}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n gandi_token_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg gandi_token_prompt)"
                 else
                     break
                 fi
             done
         elif [ "${dnsNum}" == "4" ]; then
             dns="godaddy"
-            echo -e "\n\n->$(i18n dns_selected_godaddy)\n"
-            echoColor green "$(i18n godaddy_token_prompt)"
+            echo -e "\n\n->$(msg dns_selected_godaddy)\n"
+            echoColor green "$(msg godaddy_token_prompt)"
             while :; do
                 read -r godaddy_api_token
                 if [ -z "${godaddy_api_token}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n godaddy_token_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg godaddy_token_prompt)"
                 else
                     break
                 fi
             done
         elif [ "${dnsNum}" == "5" ]; then
             dns="vultr"
-            echo -e "\n\n->$(i18n dns_selected_vultr)\n"
-            echoColor green "$(i18n vultr_token_prompt)"
+            echo -e "\n\n->$(msg dns_selected_vultr)\n"
+            echoColor green "$(msg vultr_token_prompt)"
             while :; do
                 read -r vultr_api_token
                 if [ -z "${vultr_api_token}" ]; then
-                    echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                    echoColor green "$(i18n vultr_token_prompt)"
+                    echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                    echoColor green "$(msg vultr_token_prompt)"
                 else
                     break
                 fi
             done
         else
-            echoColor red "$(i18n input_error_please_retry)"
+            echoColor red "$(msg input_error_please_retry)"
         fi
         ip=$(detectPublicIP || true)
-        echoColor green "$(i18n public_ip_check)$(echoColor red "${ip}")\n"
+        echoColor green "$(msg public_ip_check)$(echoColor red "${ip}")\n"
         while true; do
-            echoColor green "$(i18n prompt_choose)"
-            echoColor yellow "$(i18n ip_correct_default)"
-            echoColor yellow "$(i18n ip_incorrect)"
-            echoColor green "$(i18n prompt_enter_number)"
+            echoColor green "$(msg prompt_choose)"
+            echoColor yellow "$(msg ip_correct_default)"
+            echoColor yellow "$(msg ip_incorrect)"
+            echoColor green "$(msg prompt_enter_number)"
             read -r ipNum
             if [ -z "${ipNum}" ] || [ "${ipNum}" == "1" ]; then
                 break
             elif [ "${ipNum}" == "2" ]; then
-                echoColor green "$(i18n ip_prompt)"
+                echoColor green "$(msg ip_prompt)"
                 read -r ip
                 if [ -z "${ip}" ]; then
-                    echoColor red "$(i18n input_error_retry)"
+                    echoColor red "$(msg input_error_retry)"
                     continue
                 fi
                 break
             else
-                echoColor red "$(i18n input_error_please_retry)"
+                echoColor red "$(msg input_error_please_retry)"
             fi
         done
-        echo -e "\n\n->$(i18n dns_acme_summary)$(echoColor red "${domain}")\n"
-        echo -e "\n ->$(i18n dns_method_label)$(echoColor red "${dns}")\n"
-        echo -e "\n ->$(i18n public_ip_label)$(echoColor red "${ip}")\n"
+        echo -e "\n\n->$(msg dns_acme_summary)$(echoColor red "${domain}")\n"
+        echo -e "\n ->$(msg dns_method_label)$(echoColor red "${dns}")\n"
+        echo -e "\n ->$(msg public_ip_label)$(echoColor red "${ip}")\n"
         useAcme=true
         useDns=true
     else
-        echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+        echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
         read -r domain
         while :; do
             if [ -z "${domain}" ]; then
-                echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+                echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
                 read -r domain
             else
                 break
             fi
         done
         while :; do
-            echoColor purple "\n->$(i18n detecting_domain_dns ${domain})"
+            echoColor purple "\n->$(msg detecting_domain_dns ${domain})"
             ip_resolv=$(dig +short ${domain} A)
             if [ -z "${ip_resolv}" ]; then
                 ip_resolv=$(dig +short ${domain} AAAA)
             fi
             if [ -z "${ip_resolv}" ]; then
-                echoColor red "\n\n->$(i18n dns_resolution_failed)"
-                echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+                echoColor red "\n\n->$(msg dns_resolution_failed)"
+                echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
                 read -r domain
                 continue
             fi
@@ -422,21 +422,21 @@ collectHysteriaConfig() {
             if [ -z "${localip}" ]; then
                 localip=$(getPublicIP "" || true)
                 if [ -z "${localip}" ]; then
-                    echoColor red "\n\n->$(i18n local_ip_fetch_failed)"
+                    echoColor red "\n\n->$(msg local_ip_fetch_failed)"
                     exit 1
                 fi
             fi
             if [ "${localip}" != "${remoteip}" ]; then
-                echo -e " \n\n->$(i18n local_ip_label)$(echoColor red "${localip}") \n\n->$(i18n domain_ip_label)$(echoColor red "${remoteip}")\n"
-                echoColor green "$(i18n self_assign_ip_prompt)"
+                echo -e " \n\n->$(msg local_ip_label)$(echoColor red "${localip}") \n\n->$(msg domain_ip_label)$(echoColor red "${remoteip}")\n"
+                echoColor green "$(msg self_assign_ip_prompt)"
                 read -r isLocalip
                 if [ "${isLocalip}" == "y" ]; then
-                    echoColor green "$(i18n enter_local_ip)"
+                    echoColor green "$(msg enter_local_ip)"
                     read -r localip
                     while :; do
                         if [ -z "${localip}" ]; then
-                            echoColor red "\n\n->$(i18n this_option_cannot_be_empty)"
-                            echoColor green "$(i18n enter_local_ip)"
+                            echoColor red "\n\n->$(msg this_option_cannot_be_empty)"
+                            echoColor green "$(msg enter_local_ip)"
                             read -r localip
                         else
                             break
@@ -444,8 +444,8 @@ collectHysteriaConfig() {
                     done
                 fi
                 if [ "${localip}" != "${remoteip}" ]; then
-                    echoColor red "\n\n->$(i18n domain_ip_mismatch)"
-                    echoColor green "$(i18n domain_prompt) $(i18n domain_requirement)"
+                    echoColor red "\n\n->$(msg domain_ip_mismatch)"
+                    echoColor green "$(msg domain_prompt) $(msg domain_requirement)"
                     read -r domain
                     continue
                 else
@@ -457,34 +457,34 @@ collectHysteriaConfig() {
         done
         useAcme=true
         useDns=false
-        echoColor purple "\n\n->$(i18n acme_summary)$(echoColor red "${domain}")\n"
+        echoColor purple "\n\n->$(msg acme_summary)$(echoColor red "${domain}")\n"
     fi
 
     if [ "${realmMode}" == "true" ]; then
         port=""
-        echoColor purple "\n->$(i18n realm_skip_port)\n"
+        echoColor purple "\n->$(msg realm_skip_port)\n"
     else
         while :; do
-            echoColor green "\n$(i18n port_prompt)"
-            echo "$(i18n port_hint)"
+            echoColor green "\n$(msg port_prompt)"
+            echo "$(msg port_hint)"
             read -r port
             if [ -z "${port}" ]; then
                 port=$(getRandomFreeUdpPort)
                 if [ -z "${port}" ]; then
-                    echoColor red "$(i18n auto_port_busy)"
+                    echoColor red "$(msg auto_port_busy)"
                     continue
                 fi
-                echo -e "\n->$(i18n random_port_label)$(echoColor red "udp/${port}")\n"
+                echo -e "\n->$(msg random_port_label)$(echoColor red "udp/${port}")\n"
                 break
             fi
             if ! isValidPort "${port}"; then
-                echoColor red "$(i18n port_invalid_error)"
+                echoColor red "$(msg port_invalid_error)"
                 continue
             fi
-            echo -e "\n->$(i18n entered_port_label)$(echoColor red "udp/${port}")\n"
+            echo -e "\n->$(msg entered_port_label)$(echoColor red "udp/${port}")\n"
             pIDa=$(getUdpPortPid "${port}")
             if [ "$pIDa" != "" ]; then
-                echoColor red "\n->$(i18n port_in_use ${port} ${pIDa} ${pIDa})"
+                echoColor red "\n->$(msg port_in_use ${port} ${pIDa} ${pIDa})"
             else
                 break
             fi
@@ -493,13 +493,13 @@ collectHysteriaConfig() {
 
     if [ "${realmMode}" != "true" ]; then
         # Mimic(hysteria v2.12.0+):eBPF 把 UDP 伪装成 TCP。两端都要 Linux+root+mimic,且不能与端口跳跃同开。
-        echoColor green "\n$(i18n mimic_prompt)"
-        echoColor white "$(i18n mimic_hint1)"
-        echoColor white "$(i18n mimic_hint2)"
-        echoColor white "$(i18n mimic_hint3)"
-        echoColor yellow "$(i18n mimic_choice_disable_default)"
-        echoColor yellow "$(i18n mimic_choice_enable)"
-        echoColor green "$(i18n prompt_enter_number_or_default)"
+        echoColor green "\n$(msg mimic_prompt)"
+        echoColor white "$(msg mimic_hint1)"
+        echoColor white "$(msg mimic_hint2)"
+        echoColor white "$(msg mimic_hint3)"
+        echoColor yellow "$(msg mimic_choice_disable_default)"
+        echoColor yellow "$(msg mimic_choice_enable)"
+        echoColor green "$(msg prompt_enter_number_or_default)"
         read -r mimic_num
         if [ "${mimic_num}" == "2" ]; then
             mimic_status="true"
@@ -510,67 +510,67 @@ collectHysteriaConfig() {
             portHoppingMaxHopInterval=""
             portHoppingStart=""
             portHoppingEnd=""
-            echo -e "\n->$(i18n mimic_enabled_label)\n"
-            echoColor purple "$(i18n mimic_skip_port_hopping)"
+            echo -e "\n->$(msg mimic_enabled_label)\n"
+            echoColor purple "$(msg mimic_skip_port_hopping)"
         else
             mimic_status="false"
-            echo -e "\n->$(i18n mimic_disabled_label)\n"
-            echoColor green "\n$(i18n port_hopping_prompt)"
-            echoColor white "$(i18n port_hopping_intro)"
-            echoColor white "$(i18n port_hopping_detail_url)"
-            echoColor green "$(i18n prompt_choose)"
-            echoColor yellow "$(i18n port_hopping_choice_enable)"
-            echoColor yellow "$(i18n port_hopping_choice_skip)"
-            echoColor green "$(i18n prompt_enter_number)"
+            echo -e "\n->$(msg mimic_disabled_label)\n"
+            echoColor green "\n$(msg port_hopping_prompt)"
+            echoColor white "$(msg port_hopping_intro)"
+            echoColor white "$(msg port_hopping_detail_url)"
+            echoColor green "$(msg prompt_choose)"
+            echoColor yellow "$(msg port_hopping_choice_enable)"
+            echoColor yellow "$(msg port_hopping_choice_skip)"
+            echoColor green "$(msg prompt_enter_number)"
             read -r portHoppingStatus
             if [ -z "${portHoppingStatus}" ] || [ "${portHoppingStatus}" == "1" ]; then
                 portHoppingStatus="true"
-                echoColor purple "$(i18n port_hopping_enabled)"
-                echoColor white "$(i18n port_hopping_range_hint)"
+                echoColor purple "$(msg port_hopping_enabled)"
+                echoColor white "$(msg port_hopping_range_hint)"
                 while :; do
-                    echoColor green "$(i18n port_hopping_start)"
+                    echoColor green "$(msg port_hopping_start)"
                     read -r portHoppingStart
                     if [ -z "${portHoppingStart}" ]; then
                         portHoppingStart=47000
                     fi
                     if ! isValidPort "${portHoppingStart}"; then
-                        echoColor red "$(i18n port_invalid_error)"
+                        echoColor red "$(msg port_invalid_error)"
                         continue
                     fi
-                    echo -e "\n->$(i18n start_port_label)$(echoColor red "${portHoppingStart}")\n"
-                    echoColor green "$(i18n port_hopping_end)"
+                    echo -e "\n->$(msg start_port_label)$(echoColor red "${portHoppingStart}")\n"
+                    echoColor green "$(msg port_hopping_end)"
                     read -r portHoppingEnd
                     if [ -z "${portHoppingEnd}" ]; then
                         portHoppingEnd=48000
                     fi
                     if ! isValidPort "${portHoppingEnd}"; then
-                        echoColor red "$(i18n port_invalid_error)"
+                        echoColor red "$(msg port_invalid_error)"
                         continue
                     fi
-                    echo -e "\n->$(i18n end_port_label)$(echoColor red "${portHoppingEnd}")\n"
+                    echo -e "\n->$(msg end_port_label)$(echoColor red "${portHoppingEnd}")\n"
                     if [ ${portHoppingStart} -ge ${portHoppingEnd} ]; then
-                        echoColor red "$(i18n start_port_greater_error)"
+                        echoColor red "$(msg start_port_greater_error)"
                     else
                         break
                     fi
                 done
-                echoColor green "$(i18n port_hopping_mode_prompt)"
-                echoColor yellow "$(i18n port_hopping_mode_fixed)"
-                echoColor yellow "$(i18n port_hopping_mode_random)"
-                echoColor green "$(i18n prompt_enter_number)"
+                echoColor green "$(msg port_hopping_mode_prompt)"
+                echoColor yellow "$(msg port_hopping_mode_fixed)"
+                echoColor yellow "$(msg port_hopping_mode_random)"
+                echoColor green "$(msg prompt_enter_number)"
                 read -r portHoppingIntervalModeNum
                 if [ -z "${portHoppingIntervalModeNum}" ] || [ "${portHoppingIntervalModeNum}" == "1" ]; then
                     portHoppingIntervalMode="fixed"
                     while :; do
-                        echoColor green "$(i18n fixed_hop_interval_prompt)"
+                        echoColor green "$(msg fixed_hop_interval_prompt)"
                         read -r portHoppingHopInterval
                         if [ -z "${portHoppingHopInterval}" ]; then
                             portHoppingHopInterval="30s"
                         fi
-                        echo -e "\n->$(i18n fixed_hop_interval_label)$(echoColor red "${portHoppingHopInterval}")\n"
+                        echo -e "\n->$(msg fixed_hop_interval_label)$(echoColor red "${portHoppingHopInterval}")\n"
                         hopSeconds=$(echo "${portHoppingHopInterval}" | sed 's/s$//')
                         if ! isPositiveInt "${hopSeconds}" || [ "${hopSeconds}" -lt 5 ]; then
-                            echoColor red "$(i18n fixed_hop_interval_error)"
+                            echoColor red "$(msg fixed_hop_interval_error)"
                             continue
                         fi
                         portHoppingHopInterval="${hopSeconds}s"
@@ -582,38 +582,38 @@ collectHysteriaConfig() {
                     portHoppingIntervalMode="random"
                     portHoppingHopInterval=""
                     while :; do
-                        echoColor green "$(i18n min_hop_interval_prompt)"
+                        echoColor green "$(msg min_hop_interval_prompt)"
                         read -r portHoppingMinHopInterval
                         if [ -z "${portHoppingMinHopInterval}" ]; then
                             portHoppingMinHopInterval="10s"
                         fi
-                        echo -e "\n->$(i18n min_hop_interval_label)$(echoColor red "${portHoppingMinHopInterval}")\n"
+                        echo -e "\n->$(msg min_hop_interval_label)$(echoColor red "${portHoppingMinHopInterval}")\n"
                         minHopSeconds=$(echo "${portHoppingMinHopInterval}" | sed 's/s$//')
                         if ! isPositiveInt "${minHopSeconds}" || [ "${minHopSeconds}" -lt 5 ]; then
-                            echoColor red "$(i18n min_hop_interval_error)"
+                            echoColor red "$(msg min_hop_interval_error)"
                             continue
                         fi
                         portHoppingMinHopInterval="${minHopSeconds}s"
-                        echoColor green "$(i18n max_hop_interval_prompt)"
+                        echoColor green "$(msg max_hop_interval_prompt)"
                         read -r portHoppingMaxHopInterval
                         if [ -z "${portHoppingMaxHopInterval}" ]; then
                             portHoppingMaxHopInterval="30s"
                         fi
-                        echo -e "\n->$(i18n max_hop_interval_label)$(echoColor red "${portHoppingMaxHopInterval}")\n"
+                        echo -e "\n->$(msg max_hop_interval_label)$(echoColor red "${portHoppingMaxHopInterval}")\n"
                         maxHopSeconds=$(echo "${portHoppingMaxHopInterval}" | sed 's/s$//')
                         if ! isPositiveInt "${maxHopSeconds}" || [ "${maxHopSeconds}" -lt "${minHopSeconds}" ]; then
-                            echoColor red "$(i18n max_hop_interval_error)"
+                            echoColor red "$(msg max_hop_interval_error)"
                             continue
                         fi
                         portHoppingMaxHopInterval="${maxHopSeconds}s"
                         break
                     done
                 fi
-                echo -e "\n->$(i18n port_hopping_range_label)$(echoColor red "${portHoppingStart}-${portHoppingEnd}")\n"
+                echo -e "\n->$(msg port_hopping_range_label)$(echoColor red "${portHoppingStart}-${portHoppingEnd}")\n"
                 if [ "${portHoppingIntervalMode}" == "fixed" ]; then
-                    echo -e "\n->$(i18n fixed_hop_interval_summary)$(echoColor red "${portHoppingHopInterval}")\n"
+                    echo -e "\n->$(msg fixed_hop_interval_summary)$(echoColor red "${portHoppingHopInterval}")\n"
                 else
-                    echo -e "\n->$(i18n random_hop_interval_summary)$(echoColor red "${portHoppingMinHopInterval}~${portHoppingMaxHopInterval}")\n"
+                    echo -e "\n->$(msg random_hop_interval_summary)$(echoColor red "${portHoppingMinHopInterval}~${portHoppingMaxHopInterval}")\n"
                 fi
             else
                 portHoppingStatus="false"
@@ -621,132 +621,132 @@ collectHysteriaConfig() {
                 portHoppingHopInterval=""
                 portHoppingMinHopInterval=""
                 portHoppingMaxHopInterval=""
-                echoColor red "$(i18n port_hopping_disabled)"
+                echoColor red "$(msg port_hopping_disabled)"
             fi
         fi
     else
         mimic_status="false"
         portHoppingStatus="false"
-        echoColor purple "\n->$(i18n realm_skip_port_hopping)\n"
+        echoColor purple "\n->$(msg realm_skip_port_hopping)\n"
     fi
 
-    echoColor green "$(i18n congestion_title)"
-    echoColor white "$(i18n congestion_reno_hint)"
-    echoColor white "$(i18n congestion_bbr_hint)"
-    echoColor white "$(i18n congestion_brutal_hint)"
-    echoColor green "$(i18n prompt_choose)"
-    echoColor yellow "$(i18n congestion_choice_reno)"
-    echoColor yellow "$(i18n congestion_choice_bbr)"
-    echoColor yellow "$(i18n congestion_choice_brutal)"
-    echoColor green "$(i18n prompt_enter_number)"
+    echoColor green "$(msg congestion_title)"
+    echoColor white "$(msg congestion_reno_hint)"
+    echoColor white "$(msg congestion_bbr_hint)"
+    echoColor white "$(msg congestion_brutal_hint)"
+    echoColor green "$(msg prompt_choose)"
+    echoColor yellow "$(msg congestion_choice_reno)"
+    echoColor yellow "$(msg congestion_choice_bbr)"
+    echoColor yellow "$(msg congestion_choice_brutal)"
+    echoColor green "$(msg prompt_enter_number)"
     read -r congestion_num
     if [ "${congestion_num}" == "1" ]; then
         congestion_mode="reno"
         congestion_type="reno"
         congestion_bbr_profile=""
         ignore_client_bandwidth="true"
-        echo -e "\n->$(i18n congestion_selected_reno)\n"
+        echo -e "\n->$(msg congestion_selected_reno)\n"
     elif [ "${congestion_num}" == "2" ]; then
         congestion_mode="bbr"
         congestion_type="bbr"
         ignore_client_bandwidth="true"
-        echoColor green "$(i18n bbr_profile_title)"
-        echoColor white "$(i18n bbr_profile_conservative)"
-        echoColor white "$(i18n bbr_profile_standard)"
-        echoColor white "$(i18n bbr_profile_aggressive)"
-        echoColor green "$(i18n bbr_profile_prompt)"
-        echoColor yellow "$(i18n bbr_choice_conservative)"
-        echoColor yellow "$(i18n bbr_choice_standard)"
-        echoColor yellow "$(i18n bbr_choice_aggressive)"
-        echoColor green "$(i18n prompt_enter_number)"
+        echoColor green "$(msg bbr_profile_title)"
+        echoColor white "$(msg bbr_profile_conservative)"
+        echoColor white "$(msg bbr_profile_standard)"
+        echoColor white "$(msg bbr_profile_aggressive)"
+        echoColor green "$(msg bbr_profile_prompt)"
+        echoColor yellow "$(msg bbr_choice_conservative)"
+        echoColor yellow "$(msg bbr_choice_standard)"
+        echoColor yellow "$(msg bbr_choice_aggressive)"
+        echoColor green "$(msg prompt_enter_number)"
         read -r bbr_profile_num
         case ${bbr_profile_num} in
             2) congestion_bbr_profile="conservative" ;;
             3) congestion_bbr_profile="aggressive" ;;
             *) congestion_bbr_profile="standard" ;;
         esac
-        echo -e "\n->$(i18n congestion_selected_bbr)$(echoColor red "${congestion_bbr_profile}")\n"
+        echo -e "\n->$(msg congestion_selected_bbr)$(echoColor red "${congestion_bbr_profile}")\n"
     else
         congestion_mode="brutal"
         congestion_type=""
         congestion_bbr_profile=""
         ignore_client_bandwidth="false"
-        echo -e "\n->$(i18n congestion_selected_brutal)\n"
+        echo -e "\n->$(msg congestion_selected_brutal)\n"
     fi
 
     if [ "${congestion_mode}" == "brutal" ]; then
         while :; do
-            echoColor green "$(i18n delay_prompt)"
+            echoColor green "$(msg delay_prompt)"
             read -r delay
             if [ -z "${delay}" ]; then
                 delay=200
             fi
             if ! isPositiveInt "${delay}" || [ "${delay}" -eq 0 ]; then
-                echoColor red "$(i18n bandwidth_invalid_error)"
+                echoColor red "$(msg bandwidth_invalid_error)"
                 continue
             fi
             break
         done
-        echo -e "\n->$(i18n delay_label)$(echoColor red "${delay}")ms\n"
-        echo -e "\n$(i18n bandwidth_expectation)$(echoColor red "Tips:")"
+        echo -e "\n->$(msg delay_label)$(echoColor red "${delay}")ms\n"
+        echo -e "\n$(msg bandwidth_expectation)$(echoColor red "Tips:")"
         while :; do
-            echoColor green "$(i18n download_prompt)"
+            echoColor green "$(msg download_prompt)"
             read -r download
             if [ -z "${download}" ]; then
                 download=50
             fi
             if ! isPositiveInt "${download}" || [ "${download}" -eq 0 ]; then
-                echoColor red "$(i18n bandwidth_invalid_error)"
+                echoColor red "$(msg bandwidth_invalid_error)"
                 continue
             fi
             break
         done
-        echo -e "\n->$(i18n download_label)$(echoColor red "${download}")mbps\n"
+        echo -e "\n->$(msg download_label)$(echoColor red "${download}")mbps\n"
         while :; do
-            echoColor green "$(i18n upload_prompt)"
+            echoColor green "$(msg upload_prompt)"
             read -r upload
             if [ -z "${upload}" ]; then
                 upload=10
             fi
             if ! isPositiveInt "${upload}" || [ "${upload}" -eq 0 ]; then
-                echoColor red "$(i18n bandwidth_invalid_error)"
+                echoColor red "$(msg bandwidth_invalid_error)"
                 continue
             fi
             break
         done
-        echo -e "\n->$(i18n upload_label)$(echoColor red "${upload}")mbps\n"
+        echo -e "\n->$(msg upload_label)$(echoColor red "${upload}")mbps\n"
         # Brutal 速率补偿开关(hysteria v2.10.0+):默认保持开启
-        echoColor green "$(i18n losscomp_prompt)"
-        echoColor white "$(i18n losscomp_hint)"
-        echoColor yellow "$(i18n losscomp_choice_keep_default)"
-        echoColor yellow "$(i18n losscomp_choice_disable)"
-        echoColor green "$(i18n prompt_enter_number)"
+        echoColor green "$(msg losscomp_prompt)"
+        echoColor white "$(msg losscomp_hint)"
+        echoColor yellow "$(msg losscomp_choice_keep_default)"
+        echoColor yellow "$(msg losscomp_choice_disable)"
+        echoColor green "$(msg prompt_enter_number)"
         read -r losscomp_num
         if [ "${losscomp_num}" == "2" ]; then
             brutal_disable_loss_comp="true"
-            echo -e "\n->$(i18n losscomp_disabled_label)\n"
+            echo -e "\n->$(msg losscomp_disabled_label)\n"
         else
             brutal_disable_loss_comp="false"
-            echo -e "\n->$(i18n losscomp_kept_label)\n"
+            echo -e "\n->$(msg losscomp_kept_label)\n"
         fi
     else
         delay=""
         download=""
         upload=""
-        echoColor lightYellow "$(i18n non_brutal_skip)"
+        echoColor lightYellow "$(msg non_brutal_skip)"
     fi
-    echoColor green "$(i18n auth_secret_prompt)"
+    echoColor green "$(msg auth_secret_prompt)"
     read -r auth_secret
     if [ -z "${auth_secret}" ]; then
         auth_secret=$(generate_uuid)
     fi
-    echo -e "\n->$(i18n auth_secret_label)$(echoColor red "${auth_secret}")\n"
-    echoColor white "$(i18n obfs_hint)"
-    echoColor green "$(i18n obfs_prompt)"
-    echoColor yellow "$(i18n obfs_choice_disable)"
-    echoColor yellow "$(i18n obfs_choice_salamander)"
-    echoColor yellow "$(i18n obfs_choice_gecko)"
-    echoColor green "$(i18n prompt_enter_number)"
+    echo -e "\n->$(msg auth_secret_label)$(echoColor red "${auth_secret}")\n"
+    echoColor white "$(msg obfs_hint)"
+    echoColor green "$(msg obfs_prompt)"
+    echoColor yellow "$(msg obfs_choice_disable)"
+    echoColor yellow "$(msg obfs_choice_salamander)"
+    echoColor yellow "$(msg obfs_choice_gecko)"
+    echoColor green "$(msg prompt_enter_number)"
     read -r obfs_num
     if [ -z "${obfs_num}" ] || [ "${obfs_num}" == "1" ]; then
         obfs_status="false"
@@ -761,143 +761,143 @@ collectHysteriaConfig() {
         obfs_pass=${auth_secret}
     fi
     if [ "${obfs_status}" == "true" ]; then
-        echo -e "\n->$(i18n obfs_enabled ${obfs_type})\n"
+        echo -e "\n->$(msg obfs_enabled ${obfs_type})\n"
     else
-        echo -e "\n->$(i18n obfs_disabled)\n"
+        echo -e "\n->$(msg obfs_disabled)\n"
     fi
     if [ "${realmMode}" != "true" ]; then
         # ECH(hysteria v2.10.0+):加密 ClientHello 中的 SNI,中间设备只能看到幌子域名
-        echoColor green "$(i18n ech_prompt)"
-        echoColor white "$(i18n ech_hint1)"
-        echoColor white "$(i18n ech_hint2)"
-        echoColor yellow "$(i18n ech_choice_disable_default)"
-        echoColor yellow "$(i18n ech_choice_enable)"
-        echoColor green "$(i18n prompt_enter_number_or_default)"
+        echoColor green "$(msg ech_prompt)"
+        echoColor white "$(msg ech_hint1)"
+        echoColor white "$(msg ech_hint2)"
+        echoColor yellow "$(msg ech_choice_disable_default)"
+        echoColor yellow "$(msg ech_choice_enable)"
+        echoColor green "$(msg prompt_enter_number_or_default)"
         read -r ech_num
         if [ "${ech_num}" == "2" ]; then
             ech_status="true"
-            echoColor green "$(i18n ech_public_name_prompt)"
+            echoColor green "$(msg ech_public_name_prompt)"
             read -r ech_public_name
             if [ -z "${ech_public_name}" ]; then
                 ech_public_name="www.microsoft.com"
             fi
-            echo -e "\n->$(i18n ech_public_name_label)$(echoColor red "${ech_public_name}")\n"
+            echo -e "\n->$(msg ech_public_name_label)$(echoColor red "${ech_public_name}")\n"
         else
             ech_status="false"
-            echo -e "\n->$(i18n ech_disabled_label)\n"
+            echo -e "\n->$(msg ech_disabled_label)\n"
         fi
-        echoColor green "$(i18n masquerade_prompt)"
-        echoColor yellow "$(i18n masquerade_choice_disable)"
-        echoColor yellow "$(i18n masquerade_choice_string)"
-        echoColor yellow "$(i18n masquerade_choice_proxy)"
-        echoColor yellow "$(i18n masquerade_choice_file)"
-        echoColor green "$(i18n prompt_enter_number_or_default)"
+        echoColor green "$(msg masquerade_prompt)"
+        echoColor yellow "$(msg masquerade_choice_disable)"
+        echoColor yellow "$(msg masquerade_choice_string)"
+        echoColor yellow "$(msg masquerade_choice_proxy)"
+        echoColor yellow "$(msg masquerade_choice_file)"
+        echoColor green "$(msg prompt_enter_number_or_default)"
         read -r masquerade_choice
         case "${masquerade_choice}" in
             2)
                 masquerade_status="true"
                 masquerade_type="string"
-                echoColor green "$(i18n masquerade_string_prompt)"
+                echoColor green "$(msg masquerade_string_prompt)"
                 read -r masquerade_string
                 if [ -z "${masquerade_string}" ]; then
                     masquerade_string="HelloWorld"
                 fi
-                echo -e "\n->$(i18n masquerade_string_label)$(echoColor red "${masquerade_string}")\n"
-                echoColor green "$(i18n masquerade_stuff_prompt)"
+                echo -e "\n->$(msg masquerade_string_label)$(echoColor red "${masquerade_string}")\n"
+                echoColor green "$(msg masquerade_stuff_prompt)"
                 read -r masquerade_stuff
                 if [ -z "${masquerade_stuff}" ]; then
                     masquerade_stuff="HelloWorld"
                 fi
-                echo -e "\n->$(i18n masquerade_stuff_label)$(echoColor red "${masquerade_stuff}")\n"
+                echo -e "\n->$(msg masquerade_stuff_label)$(echoColor red "${masquerade_stuff}")\n"
                 ;;
             3)
                 masquerade_status="true"
                 masquerade_type="proxy"
-                echoColor green "$(i18n masquerade_proxy_prompt)"
-                echoColor white "$(i18n masquerade_proxy_hint)"
+                echoColor green "$(msg masquerade_proxy_prompt)"
+                echoColor white "$(msg masquerade_proxy_hint)"
                 read -r masquerade_proxy
                 if [ -z "${masquerade_proxy}" ]; then
                     masquerade_proxy="https://www.helloworld.org"
                 fi
-                echo -e "\n->$(i18n masquerade_proxy_label)$(echoColor red "${masquerade_proxy}")\n"
-                echoColor green "$(i18n xforwarded_prompt)"
-                echoColor yellow "$(i18n xforwarded_choice_enable)"
-                echoColor yellow "$(i18n xforwarded_choice_disable)"
-                echoColor green "$(i18n prompt_enter_number)"
+                echo -e "\n->$(msg masquerade_proxy_label)$(echoColor red "${masquerade_proxy}")\n"
+                echoColor green "$(msg xforwarded_prompt)"
+                echoColor yellow "$(msg xforwarded_choice_enable)"
+                echoColor yellow "$(msg xforwarded_choice_disable)"
+                echoColor green "$(msg prompt_enter_number)"
                 read -r masquerade_xforwarded
                 if [ -z "${masquerade_xforwarded}" ] || [ "${masquerade_xforwarded}" == "1" ]; then
                     masquerade_xforwarded="true"
                 else
                     masquerade_xforwarded="false"
                 fi
-                echo -e "\n->$(i18n xforwarded_label)$(echoColor red "${masquerade_xforwarded}")\n"
+                echo -e "\n->$(msg xforwarded_label)$(echoColor red "${masquerade_xforwarded}")\n"
                 ;;
             4)
                 masquerade_status="true"
                 masquerade_type="file"
-                echoColor green "$(i18n masquerade_file_prompt)"
-                echoColor white "$(i18n masquerade_file_hint)"
+                echoColor green "$(msg masquerade_file_prompt)"
+                echoColor white "$(msg masquerade_file_hint)"
                 read -r masquerade_file
                 if [ -z "${masquerade_file}" ]; then
                     masquerade_file="/etc/hihy/file"
                 fi
-                echo -e "\n->$(i18n masquerade_file_label)$(echoColor red "${masquerade_file}")\n"
+                echo -e "\n->$(msg masquerade_file_label)$(echoColor red "${masquerade_file}")\n"
                 ;;
             *)
                 masquerade_status="false"
                 masquerade_type=""
-                echo -e "\n->$(i18n masquerade_disabled_selected)\n"
+                echo -e "\n->$(msg masquerade_disabled_selected)\n"
                 ;;
         esac
         if [ "${masquerade_type}" != "proxy" ]; then
             masquerade_xforwarded="false"
         fi
         if [ "${masquerade_status}" == "true" ]; then
-            echoColor green "$(i18n masquerade_tcp_prompt ${port})"
-            echoColor lightYellow "$(i18n masquerade_tcp_hint1)"
-            echoColor white "$(i18n masquerade_tcp_hint2)"
-            echoColor green "$(i18n prompt_choose)"
-            echoColor yellow "$(i18n masquerade_tcp_choice_enable)"
-            echoColor yellow "$(i18n masquerade_tcp_choice_skip)"
-            echoColor green "$(i18n prompt_enter_number)"
+            echoColor green "$(msg masquerade_tcp_prompt ${port})"
+            echoColor lightYellow "$(msg masquerade_tcp_hint1)"
+            echoColor white "$(msg masquerade_tcp_hint2)"
+            echoColor green "$(msg prompt_choose)"
+            echoColor yellow "$(msg masquerade_tcp_choice_enable)"
+            echoColor yellow "$(msg masquerade_tcp_choice_skip)"
+            echoColor green "$(msg prompt_enter_number)"
             read -r masquerade_tcp
             if [ -z "${masquerade_tcp}" ] || [ "${masquerade_tcp}" == "1" ]; then
                 masquerade_tcp="true"
-                echo -e "\n->$(i18n masquerade_tcp_enabled ${port})\n"
+                echo -e "\n->$(msg masquerade_tcp_enabled ${port})\n"
             else
                 masquerade_tcp="false"
-                echo -e "\n->$(i18n masquerade_tcp_disabled ${port})\n"
+                echo -e "\n->$(msg masquerade_tcp_disabled ${port})\n"
             fi
         else
             masquerade_tcp="false"
         fi
     fi
-    echoColor green "$(i18n block_http3_prompt)"
-    echoColor lightYellow "$(i18n block_http3_hint1)"
-    echoColor white "$(i18n block_http3_hint2)"
-    echoColor green "$(i18n prompt_choose)"
-    echoColor yellow "$(i18n block_http3_choice_enable)"
-    echoColor yellow "$(i18n block_http3_choice_skip)"
-    echoColor green "$(i18n prompt_enter_number)"
+    echoColor green "$(msg block_http3_prompt)"
+    echoColor lightYellow "$(msg block_http3_hint1)"
+    echoColor white "$(msg block_http3_hint2)"
+    echoColor green "$(msg prompt_choose)"
+    echoColor yellow "$(msg block_http3_choice_enable)"
+    echoColor yellow "$(msg block_http3_choice_skip)"
+    echoColor green "$(msg prompt_enter_number)"
     read -r block_http3
     if [ -z "${block_http3}" ] || [ "${block_http3}" == "2" ]; then
         block_http3="false"
-        echo -e "\n->$(i18n block_http3_disabled)\n"
-        echoColor lightYellow "$(i18n client_only_block_http3_tip)"
+        echo -e "\n->$(msg block_http3_disabled)\n"
+        echoColor lightYellow "$(msg client_only_block_http3_tip)"
     else
         block_http3="true"
-        echoColor red "$(i18n block_http3_enabled)"
+        echoColor red "$(msg block_http3_enabled)"
     fi
-    echoColor green "$(i18n remarks_prompt)"
+    echoColor green "$(msg remarks_prompt)"
     read -r remarks
-    echoColor green "$(i18n config_input_done)"
+    echoColor green "$(msg config_input_done)"
 }
 
 # ---------- 一键模式:环境变量覆盖默认值 ----------
 applyAutoOverrides() {
     if [ -n "${HIHY_AUTO_PORT:-}" ]; then
         if ! isValidPort "${HIHY_AUTO_PORT}"; then
-            echoColor red "$(i18n auto_port_invalid "${HIHY_AUTO_PORT}")"
+            echoColor red "$(msg auto_port_invalid "${HIHY_AUTO_PORT}")"
             return 1
         fi
         port="${HIHY_AUTO_PORT}"
@@ -936,7 +936,7 @@ applyAutoOverrides() {
             portHoppingHopInterval="30s"
             if ! isValidPort "${portHoppingStart}" || ! isValidPort "${portHoppingEnd}" \
                 || [ "${portHoppingStart}" -ge "${portHoppingEnd}" ]; then
-                echoColor red "$(i18n auto_hop_invalid "${portHoppingStart}" "${portHoppingEnd}")"
+                echoColor red "$(msg auto_hop_invalid "${portHoppingStart}" "${portHoppingEnd}")"
                 return 1
             fi
         fi
@@ -947,8 +947,8 @@ applyAutoOverrides() {
 # ---------- 一键模式:零交互收集(默认值 + 环境变量 + 自动探测) ----------
 autoHysteriaConfig() {
     setConfigDefaults
-    echoColor yellowBlack "$(i18n auto_install_title)"
-    echoColor gray "$(i18n auto_env_hint)"
+    echoColor yellowBlack "$(msg auto_install_title)"
+    echoColor gray "$(msg auto_env_hint)"
     if ! applyAutoOverrides; then
         exit 1
     fi
@@ -956,7 +956,7 @@ autoHysteriaConfig() {
     if [ -z "${ip}" ]; then
         ip=$(detectPublicIP || true)
         if [ -z "${ip}" ]; then
-            echoColor red "$(i18n auto_ip_detect_failed)"
+            echoColor red "$(msg auto_ip_detect_failed)"
             exit 1
         fi
     fi
@@ -964,11 +964,11 @@ autoHysteriaConfig() {
     if [ -z "${port}" ]; then
         port=$(getRandomFreeUdpPort)
         if [ -z "${port}" ]; then
-            echoColor red "$(i18n auto_port_busy "random")"
+            echoColor red "$(msg auto_port_busy "random")"
             exit 1
         fi
     elif ! isUdpPortFree "${port}"; then
-        echoColor red "$(i18n auto_port_busy "${port}")"
+        echoColor red "$(msg auto_port_busy "${port}")"
         exit 1
     fi
 
@@ -976,31 +976,31 @@ autoHysteriaConfig() {
     [ -z "${remarks}" ] && remarks="auto-${port}"
 
     echo -e ""
-    echoColor purple "$(i18n auto_summary_title)"
-    echo -e "  $(i18n auto_summary_port "$(echoColor red "udp/${port}")")"
-    echo -e "  $(i18n auto_summary_password "$(echoColor red "${auth_secret}")")"
-    echo -e "  $(i18n auto_summary_sni "$(echoColor red "${domain}")")"
-    echo -e "  $(i18n auto_summary_cert)"
-    echo -e "  $(i18n auto_summary_congestion)"
+    echoColor purple "$(msg auto_summary_title)"
+    echo -e "  $(msg auto_summary_port "$(echoColor red "udp/${port}")")"
+    echo -e "  $(msg auto_summary_password "$(echoColor red "${auth_secret}")")"
+    echo -e "  $(msg auto_summary_sni "$(echoColor red "${domain}")")"
+    echo -e "  $(msg auto_summary_cert)"
+    echo -e "  $(msg auto_summary_congestion)"
     if [ "${masquerade_status}" == "true" ]; then
-        echo -e "  $(i18n auto_summary_masquerade_on "$(echoColor red "${masquerade_proxy}")")"
+        echo -e "  $(msg auto_summary_masquerade_on "$(echoColor red "${masquerade_proxy}")")"
     else
-        echo -e "  $(i18n auto_summary_masquerade_off)"
+        echo -e "  $(msg auto_summary_masquerade_off)"
     fi
     if [ "${mimic_status}" == "true" ]; then
-        echo -e "  $(i18n auto_summary_mimic_on)"
-        echo -e "  $(i18n auto_summary_hopping_off)"
+        echo -e "  $(msg auto_summary_mimic_on)"
+        echo -e "  $(msg auto_summary_hopping_off)"
     elif [ "${portHoppingStatus}" == "true" ]; then
-        echo -e "  $(i18n auto_summary_mimic_off)"
-        echo -e "  $(i18n auto_summary_hopping_on "$(echoColor red "${portHoppingStart}-${portHoppingEnd}")")"
+        echo -e "  $(msg auto_summary_mimic_off)"
+        echo -e "  $(msg auto_summary_hopping_on "$(echoColor red "${portHoppingStart}-${portHoppingEnd}")")"
     else
-        echo -e "  $(i18n auto_summary_mimic_off)"
-        echo -e "  $(i18n auto_summary_hopping_off)"
+        echo -e "  $(msg auto_summary_mimic_off)"
+        echo -e "  $(msg auto_summary_hopping_off)"
     fi
     if [ "${ech_status}" == "true" ]; then
-        echo -e "  $(i18n auto_summary_ech_on "$(echoColor red "${ech_public_name}")")"
+        echo -e "  $(msg auto_summary_ech_on "$(echoColor red "${ech_public_name}")")"
     else
-        echo -e "  $(i18n auto_summary_ech_off)"
+        echo -e "  $(msg auto_summary_ech_off)"
     fi
     echo -e ""
 
@@ -1018,7 +1018,7 @@ generateStagedConfig() {
     rm -f "${yaml_file}"
     touch "${yaml_file}" || return 1
 
-    echoColor yellowBlack "$(i18n config_executing)"
+    echoColor yellowBlack "$(msg config_executing)"
     max_CRW=0
     if [ "${congestion_mode}" == "brutal" ]; then
         download=$(($download + $download / 10))
@@ -1084,7 +1084,7 @@ generateStagedConfig() {
         if [ "${brutal_disable_loss_comp}" == "true" ]; then
             addOrUpdateYaml "$yaml_file" "bandwidth.disableLossCompensation" "true" "bool" || return 1
             if ! localCoreVersionAtLeast "2.10.0"; then
-                echoColor yellow "$(i18n losscomp_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
+                echoColor yellow "$(msg losscomp_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
             fi
         fi
     fi
@@ -1138,26 +1138,26 @@ generateStagedConfig() {
             insecure="0"
             days=3650
             mail="no-reply@qq.com"
-            echoColor purple "$(i18n cert_generating_start)"
-            echoColor green "$(i18n cert_ca_key)"
+            echoColor purple "$(msg cert_generating_start)"
+            echoColor green "$(msg cert_ca_key)"
             openssl genrsa -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key 2048 || return 1
-            echoColor green "$(i18n cert_ca_cert)"
+            echoColor green "$(msg cert_ca_cert)"
             openssl req -new -x509 -days ${days} -key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=Tencent Root CA" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt || return 1
-            echoColor green "$(i18n cert_server_key_csr)"
+            echoColor green "$(msg cert_server_key_csr)"
             openssl req -newkey rsa:2048 -nodes -keyout ${HIHY_CONFIG_ROOT}/cert/${domain}.key -subj "/C=CN/ST=GuangDong/L=ShenZhen/O=PonyMa/OU=Tecent/emailAddress=${mail}/CN=${domain}" -out ${HIHY_CONFIG_ROOT}/cert/${domain}.csr || return 1
-            echoColor green "$(i18n cert_sign_server)"
+            echoColor green "$(msg cert_sign_server)"
             openssl x509 -req -extfile <(printf "subjectAltName=DNS:${domain},DNS:${domain}") -days ${days} -in ${HIHY_CONFIG_ROOT}/cert/${domain}.csr -CA ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt -CAkey ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key -CAcreateserial -out ${HIHY_CONFIG_ROOT}/cert/${domain}.crt || return 1
-            echoColor green "$(i18n cert_cleanup)"
+            echoColor green "$(msg cert_cleanup)"
             rm -f ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.key ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.srl ${HIHY_CONFIG_ROOT}/cert/${domain}.csr
-            echoColor green "$(i18n cert_move_ca)"
+            echoColor green "$(msg cert_move_ca)"
             mv ${HIHY_CONFIG_ROOT}/cert/${domain}.ca.crt ${HIHY_CONFIG_ROOT}/result || return 1
-            echoColor purple "$(i18n cert_success)"
+            echoColor purple "$(msg cert_success)"
             pinSHA256=$(openssl x509 -noout -fingerprint -sha256 -in ${HIHY_CONFIG_ROOT}/cert/${domain}.crt 2>/dev/null | sed 's/^.*=//')
             if isValidFingerprint "${pinSHA256}"; then
-                echoColor green "$(i18n cert_sha256_label)$(echoColor red "${pinSHA256}")"
-                echoColor purple "$(i18n cert_pinsha256_hint)"
+                echoColor green "$(msg cert_sha256_label)$(echoColor red "${pinSHA256}")"
+                echoColor purple "$(msg cert_pinsha256_hint)"
             else
-                echoColor yellow "$(i18n cert_fingerprint_fail)"
+                echoColor yellow "$(msg cert_fingerprint_fail)"
                 return 1
             fi
             addOrUpdateYaml "$yaml_file" "tls.cert" "${HIHY_CONFIG_ROOT}/cert/${domain}.crt" || return 1
@@ -1231,13 +1231,13 @@ generateStagedConfig() {
     # ECH:内核 >= v2.10.0 才支持;老内核会忽略 ech 块导致客户端 fail-closed,必须硬性拦截
     if [ "${ech_status}" == "true" ]; then
         if ! localCoreVersionAtLeast "2.10.0"; then
-            echoColor yellow "$(i18n ech_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
+            echoColor yellow "$(msg ech_core_too_old "$(getLocalHysteriaVersion 2>/dev/null || echo unknown)")"
             return 1
         elif generateEchKeypair "${HIHY_CONFIG_ROOT}/cert/ech.pem" "${ech_public_name}"; then
             addOrUpdateYaml "$yaml_file" "ech.keyPath" "${HIHY_CONFIG_ROOT}/cert/ech.pem" || return 1
-            echoColor green "$(i18n ech_keygen_success "$(echoColor red "${ech_public_name}")")"
+            echoColor green "$(msg ech_keygen_success "$(echoColor red "${ech_public_name}")")"
         else
-            echoColor yellow "$(i18n ech_keygen_failed)"
+            echoColor yellow "$(msg ech_keygen_failed)"
             return 1
         fi
     fi

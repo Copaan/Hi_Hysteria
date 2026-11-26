@@ -4,7 +4,7 @@ generateSingboxJson() (
     local profile="${1:-desktop}"
     case "$profile" in desktop|app) ;; *) return 1 ;; esac
     loadClientParams || return 1
-    [ "$HIHY_CP_mimicStatus" != true ] || { securityError 'sing-box does not support Mimic.'; return 1; }
+    [ "$HIHY_CP_mimicStatus" != true ] || { securityError 'sing-box 不支持 Mimic。'; return 1; }
     local destination outFile json_file root="$HIHY_ROOT_DIR" mirror="$HIHY_RULESET_MIRROR" ca_file n up_num down_num
     destination=$(clientOutputPath "$HIHY_CP_remarks" singbox.json) || return 1
     outFile=$(mktemp "$HIHY_EXPORT_DIR/.singbox.XXXXXXXX") || return 1
@@ -42,7 +42,7 @@ JSON
     addOrUpdateYaml "$outFile" outbounds[0].tls.server_name "$HIHY_CP_sni" string || return 1
     if [ -n "$HIHY_CP_pinSHA256" ]; then
         ca_file="$root/result/$HIHY_CP_sni.ca.crt"
-        [ -s "$ca_file" ] || { securityError 'CA certificate required for sing-box export.'; return 1; }
+        [ -s "$ca_file" ] || { securityError '导出 sing-box 配置需要 CA 证书。'; return 1; }
         n=0
         while IFS= read -r line || [ -n "$line" ]; do
             [ -n "$line" ] || continue

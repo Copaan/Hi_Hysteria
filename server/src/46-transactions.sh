@@ -37,7 +37,7 @@ stopValidationProcess() {
 
 # Validate operator input before writing certificate paths or stopping a service.
 validateHysteriaInputs() {
-    isValidDomain "$domain" || { securityError 'Invalid certificate DNS name.'; return 1; }
+    isValidDomain "$domain" || { securityError '证书域名无效。'; return 1; }
     [ -n "$auth_secret" ] || return 1
     [[ "$auth_secret" != *$'\n'* && "$auth_secret" != *$'\r'* ]] || return 1
     if [ "$realmMode" != true ]; then
@@ -119,7 +119,7 @@ writeHysteriaConfig() (
     if [ "$useAcme" = true ]; then timeout=60; [ "$useDns" = true ] || allowPort tcp 80 || return 1; fi
     startInstallValidationProcess "$candidate/conf/config.yaml" "$transaction/validation.log" || return 1
     if ! waitForValidationOutcome "$transaction/validation.log" "$timeout"; then
-        securityError 'Candidate configuration failed to start; previous configuration is retained.'
+        securityError '新配置启动失败，已保留原配置。'
         return 1
     fi
     stopValidationProcess

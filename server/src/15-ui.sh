@@ -59,9 +59,9 @@ generate_qr() {
     printf '%s' "$url" | qrencode -t ANSIUTF8 -o - -l "$level" -m "$margin" -s 1
 
     if [ $? -eq 0 ]; then
-        echoColor green "\n$(i18n qr_code_generated_success)"
+        echoColor green "\n$(msg qr_code_generated_success)"
     else
-        echoColor red "\n$(i18n qr_code_generated_failure)"
+        echoColor red "\n$(msg qr_code_generated_failure)"
         return 1
     fi
 }
@@ -111,55 +111,55 @@ show_menu() {
     fi
 
     echo -e " \033[1;36m╭───────────────────────────────────────────╮\033[0m"
-    menuBoxLine "$(i18n menu_title) ${hihyV}"
-    menuBoxLine "https://github.com/kaecho/Hi_Hysteria"
+    menuBoxLine "$(msg menu_title) ${hihyV}"
+    menuBoxLine "https://github.com/Copaan/Hi_Hysteria"
     echo -e " \033[1;36m╰───────────────────────────────────────────╯\033[0m"
 
     # 状态行:服务状态 + 内核版本
     local status_segment
     case "$state" in
-        running) status_segment="\033[32m●\033[0m $(i18n menu_status_running)" ;;
-        stopped) status_segment="\033[31m●\033[0m $(i18n menu_status_stopped)" ;;
-        *) status_segment="\033[90m○\033[0m $(i18n menu_status_not_installed)" ;;
+        running) status_segment="\033[32m●\033[0m $(msg menu_status_running)" ;;
+        stopped) status_segment="\033[31m●\033[0m $(msg menu_status_stopped)" ;;
+        *) status_segment="\033[90m○\033[0m $(msg menu_status_not_installed)" ;;
     esac
     if [ -n "$coreV" ]; then
-        echo -e "  ${status_segment} \033[90m│\033[0m $(i18n menu_status_core) ${coreV}"
+        echo -e "  ${status_segment} \033[90m│\033[0m $(msg menu_status_core) ${coreV}"
     else
         echo -e "  ${status_segment}"
     fi
 
-    menuSection "$(i18n menu_section_deploy)"
-    menuItem 1 "$(i18n menu_item_install)"
-    menuItem 16 "$(i18n menu_item_autoinstall)"
-    menuItem 2 "$(i18n menu_item_uninstall)"
+    menuSection "$(msg menu_section_deploy)"
+    menuItem 1 "$(msg menu_item_install)"
+    menuItem 16 "$(msg menu_item_autoinstall)"
+    menuItem 2 "$(msg menu_item_uninstall)"
 
-    menuSection "$(i18n menu_section_service)"
-    menuItem 3 "$(i18n menu_item_start)"
-    menuItem 4 "$(i18n menu_item_stop)"
-    menuItem 5 "$(i18n menu_item_restart)"
-    menuItem 6 "$(i18n menu_item_status)"
+    menuSection "$(msg menu_section_service)"
+    menuItem 3 "$(msg menu_item_start)"
+    menuItem 4 "$(msg menu_item_stop)"
+    menuItem 5 "$(msg menu_item_restart)"
+    menuItem 6 "$(msg menu_item_status)"
 
-    menuSection "$(i18n menu_section_config)"
-    menuItem 8 "$(i18n menu_item_view_config)"
-    menuItem 9 "$(i18n menu_item_reconfigure)"
-    menuItem 10 "$(i18n menu_item_switch_ip)"
-    menuItem 12 "$(i18n menu_item_acl)"
-    menuItem 15 "$(i18n menu_item_socks5)"
-    menuItem 17 "$(i18n menu_item_subscription)"
+    menuSection "$(msg menu_section_config)"
+    menuItem 8 "$(msg menu_item_view_config)"
+    menuItem 9 "$(msg menu_item_reconfigure)"
+    menuItem 10 "$(msg menu_item_switch_ip)"
+    menuItem 12 "$(msg menu_item_acl)"
+    menuItem 15 "$(msg menu_item_socks5)"
+    menuItem 17 "$(msg menu_item_subscription)"
 
-    menuSection "$(i18n menu_section_maintain)"
-    menuItem 7 "$(i18n menu_item_update_core)"
-    menuItem 13 "$(i18n menu_item_traffic)"
-    menuItem 14 "$(i18n menu_item_logs)"
+    menuSection "$(msg menu_section_maintain)"
+    menuItem 7 "$(msg menu_item_update_core)"
+    menuItem 13 "$(msg menu_item_traffic)"
+    menuItem 14 "$(msg menu_item_logs)"
 
     echo -e "\n \033[90m─────────────────────────────────────────\033[0m"
-    menuItem 0 "$(i18n menu_item_exit)"
-    echo -e " \033[90m$(i18n menu_hint_hihy_cmd "hihy")\033[0m"
+    menuItem 0 "$(msg menu_item_exit)"
+    echo -e " \033[90m$(msg menu_hint_hihy_cmd "hihy")\033[0m"
     echo ""
 }
 
 wait_for_continue() {
-    echo -e "\n$(echoColor green "$(i18n menu_wait_continue)")"
+    echo -e "\n$(echoColor green "$(msg menu_wait_continue)")"
     read -r -n 1 -s
 }
 

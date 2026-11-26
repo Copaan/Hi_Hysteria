@@ -26,7 +26,7 @@ cleanupHysteria2Iptables() { return 0; }
 
 checkRoot() {
     if [ "$(id -u)" -ne 0 ]; then
-        echoColor red "$(i18n error_root_required)"
+        echoColor red "$(msg error_root_required)"
         exit 1
     fi
 }
@@ -36,22 +36,12 @@ uninstall() {
     local install_state
     install_state=$(classifyInstallState)
     if [ "$install_state" = "not-installed" ]; then
-        echoColor red "$(i18n hysteria_not_installed)"
+        echoColor red "$(msg hysteria_not_installed)"
         return 1
     fi
 
-    # rm -rf /etc/hihy 会连带删掉 i18n 语言文件,先快照到临时目录,
-    # 否则卸载过程后半段的提示全部退化为裸 key
-    local i18n_snapshot=""
-    if [ -d "$HIHY_I18N_DIR" ]; then
-        i18n_snapshot=$(mktemp -d 2>/dev/null) || i18n_snapshot=""
-        if [ -n "$i18n_snapshot" ] && cp -r "$HIHY_I18N_DIR/." "$i18n_snapshot/" 2>/dev/null; then
-            HIHY_I18N_DIR="$i18n_snapshot"
-        fi
-    fi
-
     if [ "$install_state" = "partially-installed" ]; then
-        echoColor yellow "$(i18n partial_uninstall_cleanup)"
+        echoColor yellow "$(msg partial_uninstall_cleanup)"
     fi
 
     # 停止服务
@@ -97,11 +87,9 @@ uninstall() {
     uninstall_rc_local_for_arch
     # 检查是否完全删除
     if [ ! -d "/etc/hihy" ]; then
-        echoColor green "$(i18n uninstall_complete)"
-        [ -n "$i18n_snapshot" ] && rm -rf "$i18n_snapshot"
+        echoColor green "$(msg uninstall_complete)"
     else
-        echoColor red "$(i18n uninstall_error)"
-        [ -n "$i18n_snapshot" ] && rm -rf "$i18n_snapshot"
+        echoColor red "$(msg uninstall_error)"
         exit 1
     fi
 }

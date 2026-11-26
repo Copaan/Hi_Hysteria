@@ -13,7 +13,7 @@ subscriptionPathOwned() {
 }
 subscriptionOwned() { subscriptionPathOwned "$HIHY_SUB_ETC"; }
 subscriptionEnabled() { subscriptionOwned && [ "$(subscriptionRead enabled false)" = true ]; }
-subscriptionError() { securityError "$(i18n "$1")"; }
+subscriptionError() { securityError "$(msg "$1")"; }
 
 subscriptionValidatePaths() {
     local dir
@@ -210,5 +210,5 @@ subscriptionRefresh() (
     trap 'rm -rf -- "$dir"' EXIT
     subscriptionRenderSnapshot "$HIHY_ROOT_DIR" "$dir/snapshot" && subscriptionCommitSnapshot "$dir/snapshot" || return 1
     subscriptionPruneSnapshots || return 1
-    printf '%s\n' "$(i18n sub_refreshed)"
+    printf '%s\n' "$(msg sub_refreshed)"
 )

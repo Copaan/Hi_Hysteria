@@ -2,7 +2,7 @@
 setup_rc_local_for_arch() {
     # 检测是否为 Arch Linux
     if grep -q "Arch Linux" /etc/os-release; then
-        echo "$(i18n arch_detected_setup)"
+        echo "$(msg arch_detected_setup)"
 
         # 创建 /etc/systemd/system/rc-local.service 文件
         cat <<EOF | tee /etc/systemd/system/rc-local.service
@@ -23,14 +23,14 @@ EOF
         # 启用 rc-local 服务
         systemctl enable rc-local
 
-        echo "$(i18n arch_rc_local_setup_done)"
+        echo "$(msg arch_rc_local_setup_done)"
     fi
 }
 
 uninstall_rc_local_for_arch() {
     # 检测是否为 Arch Linux
     if grep -q "Arch Linux" /etc/os-release; then
-        echo "$(i18n arch_detected_uninstall)"
+        echo "$(msg arch_detected_uninstall)"
 
         # 停止并禁用 rc-local 服务
         systemctl stop rc-local
@@ -42,7 +42,7 @@ uninstall_rc_local_for_arch() {
         # 重新加载 systemd 配置
         systemctl daemon-reload
 
-        echo "$(i18n arch_rc_local_uninstall_done)"
+        echo "$(msg arch_rc_local_uninstall_done)"
     fi
 }
 
@@ -286,24 +286,24 @@ install() {
     install_state=$(classifyInstallState)
 
     if [ "$install_state" = "installed" ]; then
-        echoColor green "$(i18n already_installed)"
+        echoColor green "$(msg already_installed)"
         return 0
     fi
 
     if [ "$install_state" = "partially-installed" ]; then
-        securityError "Existing incomplete installation; inspect and uninstall explicitly before retrying."
+        securityError "检测到未完成的安装，请先检查并卸载后重试。"
         return 1
     fi
 
     # 创建必要目录
     mkdir -p /etc/hihy/{bin,conf,cert,result,logs}
     markInstallFailed "install-start" "installation started but not completed"
-    echoColor purple "$(i18n install_ready)"
+    echoColor purple "$(msg install_ready)"
 
     # 尽早安装 hihy 启动器，确保即使后续步骤失败，用户仍可用 hihy 命令重试
     if ! installHihyLauncher; then
         markInstallFailed "launcher" "failed to install hihy launcher at start"
-        echoColor red "$(i18n hihy_cmd_install_fail)"
+        echoColor red "$(msg hihy_cmd_install_fail)"
         exit 1
     fi
 
@@ -339,20 +339,20 @@ install() {
 
     clearInstallFailureMarker
     generate_client_config || return 1
-    echoColor yellowBlack "$(i18n install_done)"
+    echoColor yellowBlack "$(msg install_done)"
 }
 
 # 将 listen 中的范围端口格式 47000-48000 转换为防火墙规则使用的 47000:48000
 checkLogs() {
     if [ -f "/etc/hihy/logs/hihy.log" ]; then
-        echoColor gray "$(i18n logs_follow_hint)"
+        echoColor gray "$(msg logs_follow_hint)"
         # 父进程捕获 INT:Ctrl+C 只结束 tail,脚本本身回到菜单
         trap ':' INT
         tail -f /etc/hihy/logs/hihy.log
         trap - INT
         echo ""
     else
-        echoColor red "$(i18n logs_not_found)"
+        echoColor red "$(msg logs_not_found)"
     fi
 }
 start() {
@@ -364,13 +364,13 @@ start() {
             /etc/init.d/hihy start
         fi
         if [ $? -eq 0 ]; then
-            echoColor green "$(i18n service_start_success)"
+            echoColor green "$(msg service_start_success)"
         else
-            echoColor red "$(i18n service_start_failure)"
+            echoColor red "$(msg service_start_failure)"
             return 1
         fi
     else
-        echoColor red "$(i18n service_script_not_found)"
+        echoColor red "$(msg service_script_not_found)"
         return 1
     fi
 }
@@ -382,13 +382,13 @@ stop() {
             /etc/init.d/hihy stop
         fi
         if [ $? -eq 0 ]; then
-            echoColor green "$(i18n service_stop_success)"
+            echoColor green "$(msg service_stop_success)"
         else
-            echoColor red "$(i18n service_stop_failure)"
+            echoColor red "$(msg service_stop_failure)"
             return 1
         fi
     else
-        echoColor red "$(i18n service_script_not_found)"
+        echoColor red "$(msg service_script_not_found)"
         return 1
     fi
 }
@@ -400,13 +400,13 @@ restart() {
             /etc/init.d/hihy restart
         fi
         if [ $? -eq 0 ]; then
-            echoColor green "$(i18n service_restart_success)"
+            echoColor green "$(msg service_restart_success)"
         else
-            echoColor red "$(i18n service_restart_failure)"
+            echoColor red "$(msg service_restart_failure)"
             return 1
         fi
     else
-        echoColor red "$(i18n service_script_not_found)"
+        echoColor red "$(msg service_script_not_found)"
         return 1
     fi
 }
@@ -418,19 +418,19 @@ checkStatus() {
             msg=$(/etc/init.d/hihy status)
         fi
         if [ $? -ne 0 ]; then
-            echoColor red "$(i18n service_status_failure)"
+            echoColor red "$(msg service_status_failure)"
             exit 1
         fi
 
         if echo "$msg" | grep -q "is running"; then
-            echoColor green "$(i18n service_running "hysteria")"
+            echoColor green "$(msg service_running "hysteria")"
             version=$(/etc/hihy/bin/appS version | grep "^Version" | awk '{print $2}')
-            echoColor purple "$(i18n service_current_version ${version})"
+            echoColor purple "$(msg service_current_version ${version})"
         else
-            echoColor red "$(i18n service_not_running "hysteria")"
+            echoColor red "$(msg service_not_running "hysteria")"
         fi
     else
-        echoColor red "$(i18n service_script_not_found)"
+        echoColor red "$(msg service_script_not_found)"
         return 1
     fi
 }

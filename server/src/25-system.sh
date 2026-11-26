@@ -74,7 +74,9 @@ getArchitecture() {
     esac
 }
 
-checkSystemForUpdate() {
+ensureSystemDependencies() {
+    local DEBIAN_FRONTEND=noninteractive
+    export DEBIAN_FRONTEND
     local release=""
     local installType=""
     local updateNeeded=false
@@ -84,8 +86,8 @@ checkSystemForUpdate() {
     # 检测包管理器
     if command -v apt >/dev/null; then
         packageManager="apt"
-        installType="apt -y -q install"
-        upgrade="apt update"
+        installType="apt-get -y -q install"
+        upgrade="apt-get update"
     elif command -v yum >/dev/null; then
         packageManager="yum"
         installType="yum -y -q install"
@@ -103,7 +105,7 @@ checkSystemForUpdate() {
         installType="apk add --no-cache"
         upgrade="apk update"
     else
-        echoColor red "\n$(i18n package_manager_not_supported)"
+        echoColor red "\n$(msg package_manager_not_supported)"
         echoColor yellow "$(cat /etc/issue 2>/dev/null)"
         echoColor yellow "$(cat /proc/version 2>/dev/null)"
         exit 1
@@ -147,7 +149,7 @@ checkSystemForUpdate() {
 
     # 仅在需要安装包时更新软件源
     if [ "$updateNeeded" = true ]; then
-        echoColor purple "\n$(i18n package_manager_update_sources)"
+        echoColor purple "\n$(msg package_manager_update_sources)"
         ${upgrade} || return 1
 
         ${installType} ca-certificates || return 1
@@ -204,8 +206,12 @@ checkSystemForUpdate() {
             esac
         fi
 
-        echoColor purple "\n$(i18n package_install_complete)"
+        echoColor purple "\n$(msg package_install_complete)"
     fi
 
-    installPrivateYq || return 1
+    return 0
+}
+
+checkSystemForUpdate() {
+    ensureSystemDependencies && installPrivateYq
 }

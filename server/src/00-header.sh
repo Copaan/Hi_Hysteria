@@ -1,12 +1,6 @@
 #!/bin/bash
-hihyV="ver1.21-secure.1"
+hihyV="ver1.22-secure.1"
 umask 077
-
-# i18n 多语言支持
-HIHY_I18N_SCHEMA=1
-HIHY_I18N_DIR="${HIHY_I18N_DIR:-/etc/hihy/i18n}"
-HIHY_I18N_CONF="${HIHY_I18N_CONF:-/etc/hihy/conf/i18n.conf}"
-HIHY_LANG="${HIHY_LANG:-}"
 
 HIHY_ROOT_DIR="${HIHY_ROOT_DIR:-/etc/hihy}"
 HIHY_BIN_LINK="${HIHY_BIN_LINK:-/usr/bin/hihy}"

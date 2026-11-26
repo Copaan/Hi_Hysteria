@@ -1,72 +1,38 @@
 #!/bin/bash
-# 组装 server/src/*.sh -> server/hy2.sh (单文件分发产物)
-# 用法: bash scripts/build.sh
-#
-# 产物行号约定:
-#   line 1: shebang
-#   line 2: hihyV="ver1.XX"  (保留分发文件的版本标记)
-#   line 3+: GENERATED header + 其余模块
+# 从模块生成独立运行脚本、单文件安装器及摘要清单。
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SRC_DIR="$REPO_ROOT/server/src"
-# HIHY_BUILD_OUT 允许把产物写到别处(test_build.sh 用它做无副作用比对)
-OUT="${HIHY_BUILD_OUT:-$REPO_ROOT/server/hy2.sh}"
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+OUT_DIR="${HIHY_BUILD_DIR:-$ROOT/server}"
+mkdir -p "$OUT_DIR"
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
 shopt -s nullglob
-modules=("$SRC_DIR"/*.sh)
-shopt -u nullglob
-
-if [ "${#modules[@]}" -eq 0 ]; then
-    echo "ERROR: no modules found in $SRC_DIR" >&2
-    exit 1
-fi
-
-first=1
-for m in "${modules[@]}"; do
-    if [ "$first" -eq 1 ]; then
-        # line 1: shebang
-        head -n 1 "$m" >"$TMP"
-        # line 2: hihyV (version marker)
-        grep '^hihyV=' "$m" | head -n 1 >>"$TMP"
-        # line 3+: GENERATED header
-        cat >>"$TMP" <<'GEN'
-# =============================================================================
-# GENERATED FILE — DO NOT EDIT.
-# Source lives in server/src/*.sh. Edit there and run: bash scripts/build.sh
-# =============================================================================
-GEN
-        # 00-header.sh 余下内容(去掉 shebang 和 hihyV 行)
-        tail -n +2 "$m" | grep -v '^hihyV=' >>"$TMP"
-        first=0
+modules=("$ROOT/server/src/"*.sh)
+[ "${#modules[@]}" -gt 0 ] || { echo '没有可构建的模块。' >&2; exit 1; }
+first=true
+for module in "${modules[@]}"; do
+    if [ "$first" = true ]; then
+        head -n 1 "$module" >"$stage/hy2.sh"
+        grep '^hihyV=' "$module" >>"$stage/hy2.sh"
+        printf '%s\n' '# GENERATED FILE — edit server/src/ and run bash scripts/build.sh.' >>"$stage/hy2.sh"
+        tail -n +2 "$module" | grep -v '^hihyV=' >>"$stage/hy2.sh"
+        first=false
     else
-        printf '\n# ----- %s -----\n' "$(basename "$m")" >>"$TMP"
-        if head -n 1 "$m" | grep -q '^#!'; then
-            tail -n +2 "$m" >>"$TMP"
-        else
-            cat "$m" >>"$TMP"
-        fi
+        printf '\n# ----- %s -----\n' "$(basename "$module")" >>"$stage/hy2.sh"
+        if head -n 1 "$module" | grep -q '^#!'; then tail -n +2 "$module" >>"$stage/hy2.sh"; else cat "$module" >>"$stage/hy2.sh"; fi
     fi
 done
-
-bash -n "$TMP" || { echo "ERROR: assembled script failed syntax check" >&2; exit 1; }
-mv "$TMP" "$OUT"
-trap - EXIT
-chmod +x "$OUT"
-echo "Built $OUT from ${#modules[@]} modules."
-
-if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck -S error "$OUT"; then
-        echo "shellcheck: no errors"
-    else
-        echo "shellcheck: errors above" >&2
-        exit 1
-    fi
-fi
-
-if [ "$OUT" = "$REPO_ROOT/server/hy2.sh" ]; then
-    (cd "$REPO_ROOT/server" && sha256sum install.sh hy2.sh i18n/*.json | tr -d '\r' | sed 's/ \*/  /' >SHA256SUMS)
-fi
+bash -n "$stage/hy2.sh"
+digest=$(sha256sum "$stage/hy2.sh" | cut -d' ' -f1)
+marker="__HIHY_RUNTIME_$digest"
+! grep -Fxq "$marker" "$stage/hy2.sh"
+cp "$ROOT/scripts/install-header.sh" "$stage/install.sh"
+printf '\nHIHY_EMBEDDED_SHA256=\x27%s\x27\nextractEmbeddedRuntime() {\n    cat <<\x27%s\x27\n' "$digest" "$marker" >>"$stage/install.sh"
+cat "$stage/hy2.sh" >>"$stage/install.sh"
+printf '%s\n}\n\n' "$marker" >>"$stage/install.sh"
+printf '%s\n' 'if [ "${BASH_SOURCE[0]}" = "$0" ]; then installerMain "$@"; fi' >>"$stage/install.sh"
+bash -n "$stage/install.sh"
+(cd "$stage" && sha256sum install.sh hy2.sh | tr -d '\r' | sed 's/ \*/  /' >SHA256SUMS)
+for file in hy2.sh install.sh SHA256SUMS; do mv -- "$stage/$file" "$OUT_DIR/$file"; done
+chmod +x "$OUT_DIR/hy2.sh" "$OUT_DIR/install.sh"
+printf '已从 %s 个模块生成主程序、单文件安装器和摘要。\n' "${#modules[@]}"

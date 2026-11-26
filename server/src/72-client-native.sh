@@ -67,7 +67,7 @@ generate_client_config() (
         addOrUpdateYaml "$client_configfile" "tls.pinSHA256" "${pinSHA256}" "string" || return 1
         addOrUpdateYaml "$client_configfile" "tls.insecure" "true" || return 1
     elif [ "${insecure}" == "true" ]; then
-        securityError 'A valid certificate pin is required for this client.'; return 1
+        securityError '此客户端需要有效的证书指纹。'; return 1
     elif [ "${insecure}" == "false" ]; then
         addOrUpdateYaml "$client_configfile" "tls.insecure" "false" || return 1
     fi
@@ -175,85 +175,85 @@ generate_client_config() (
     fi
     # 在生成配置前添加分隔线
     echo -e "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "$(i18n client_config_generating)"
+    echo -e "$(msg client_config_generating)"
 
     # 美化输出信息
-    echo -e "\n$(i18n client_config_info_title)"
+    echo -e "\n$(msg client_config_info_title)"
     local localV
     localV=$(getLocalHysteriaVersion || true)
-    echo -e "\n$(i18n client_config_server_version "$(echoColor red ${localV})")"
+    echo -e "\n$(msg client_config_server_version "$(echoColor red ${localV})")"
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     if [ "${realmMode}" != "true" ]; then
         if [ "$HIHY_CP_masqueradeStatus" == "true" ]; then
             if [ "$HIHY_CP_masqueradeTcp" != "true" ]; then
-                echo -e "$(i18n client_config_masquerade_tcp_not_listened)"
-                echo -e "$(i18n client_config_masquerade_h3_hint "$(echoColor red "$(i18n client_config_masquerade_h3_action)")")"
+                echo -e "$(msg client_config_masquerade_tcp_not_listened)"
+                echo -e "$(msg client_config_masquerade_h3_hint "$(echoColor red "$(msg client_config_masquerade_h3_action)")")"
             fi
         fi
 
         if [ -n "${pinSHA256}" ]; then
-            echo -e "\n$(i18n client_config_security_tip_title)"
-            echo -e "$(i18n client_config_pinsha256_safe_hint "$(echoColor red pinSHA256)")"
-            echo -e "   $(i18n client_config_fingerprint_label "$(echoColor red ${pinSHA256})")"
-            echo -e "   $(i18n client_config_masquerade_trust_hint)"
+            echo -e "\n$(msg client_config_security_tip_title)"
+            echo -e "$(msg client_config_pinsha256_safe_hint "$(echoColor red pinSHA256)")"
+            echo -e "   $(msg client_config_fingerprint_label "$(echoColor red ${pinSHA256})")"
+            echo -e "   $(msg client_config_masquerade_trust_hint)"
         elif [ "${insecure}" == "true" ]; then
-            echo -e "\n$(i18n client_config_security_warning_title)"
-            echo -e "$(i18n client_config_selfsigned_verify_hint)"
-            echo -e "   $(i18n client_config_selfsigned_verify_step1)"
-            echo -e "   $(i18n client_config_selfsigned_verify_step2)"
+            echo -e "\n$(msg client_config_security_warning_title)"
+            echo -e "$(msg client_config_selfsigned_verify_hint)"
+            echo -e "   $(msg client_config_selfsigned_verify_step1)"
+            echo -e "   $(msg client_config_selfsigned_verify_step2)"
         fi
         if [ "${HIHY_CP_mimicStatus}" == "true" ]; then
-            echoColor red "\n$(i18n client_config_mimic_warning_title)"
-            echoColor yellow "$(i18n client_config_mimic_warning1)"
-            echoColor yellow "$(i18n client_config_mimic_warning2)"
-            echoColor yellow "$(i18n client_config_mimic_warning3)"
+            echoColor red "\n$(msg client_config_mimic_warning_title)"
+            echoColor yellow "$(msg client_config_mimic_warning1)"
+            echoColor yellow "$(msg client_config_mimic_warning2)"
+            echoColor yellow "$(msg client_config_mimic_warning3)"
         fi
         # 伪装地址提示只在启用了伪装且监听 TCP 时才有意义
         if [ "$HIHY_CP_masqueradeStatus" == "true" ] && [ "$HIHY_CP_masqueradeTcp" == "true" ]; then
-            echoColor purple "\n$(i18n client_config_masquerade_address "$(echoColor red https://${tls_sni}:${port})")"
+            echoColor purple "\n$(msg client_config_masquerade_address "$(echoColor red https://${tls_sni}:${port})")"
         fi
     fi
 
     if [ "${realmMode}" == "true" ]; then
-        echoColor purple "\n$(i18n client_config_realm_mode_desc)"
-        echoColor purple "\n$(i18n client_config_realm_rendezvous_label)"
+        echoColor purple "\n$(msg client_config_realm_mode_desc)"
+        echoColor purple "\n$(msg client_config_realm_rendezvous_label)"
         echoColor green "  ${realmURI}"
         echo -e "\n"
-        echoColor yellow "$(i18n client_config_realm_client_support_warning)"
-        echoColor yellow "$(i18n client_config_realm_server_password "$(echoColor red ${auth_secret})")"
+        echoColor yellow "$(msg client_config_realm_client_support_warning)"
+        echoColor yellow "$(msg client_config_realm_server_password "$(echoColor red ${auth_secret})")"
         echo -e "\n"
-        echoColor purple "\n$(i18n client_config_realm_share_link_title)"
+        echoColor purple "\n$(msg client_config_realm_share_link_title)"
         echoColor green "${url}"
         echo -e "\n"
         generate_qr "${url}"
         echo -e "\n"
     else
-        echoColor purple "\n$(i18n client_config_share_link_title)"
+        echoColor purple "\n$(msg client_config_share_link_title)"
         echoColor green "${url}"
         echo -e "\n"
         generate_qr "${url}"
     fi
 
     if [ "${realmMode}" == "true" ]; then
-        echoColor purple "\n$(i18n client_config_native_file_realm "$(echoColor green ${client_configfile})")"
+        echoColor purple "\n$(msg client_config_native_file_realm "$(echoColor green ${client_configfile})")"
     else
-        echoColor purple "\n$(i18n client_config_native_file_standard "$(echoColor green ${client_configfile})")"
+        echoColor purple "\n$(msg client_config_native_file_standard "$(echoColor green ${client_configfile})")"
     fi
-    echoColor purple "$(i18n client_config_tutorial_link)"
-    echoColor green "↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓$(i18n client_config_copy_marker)↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓"
+    echoColor purple "$(msg client_config_tutorial_link)"
+    echoColor green "↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓$(msg client_config_copy_marker)↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓"
     cat "${client_configfile}"
-    echoColor green "↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑$(i18n client_config_copy_marker)↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
+    echoColor green "↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑$(msg client_config_copy_marker)↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
     # Mimic 仅由原生客户端导出，其余已选择参数按各客户端能力输出。
     if [ "${HIHY_CP_mimicStatus}" == "true" ]; then
-        echoColor yellow "$(i18n client_mihomo_mimic_skip)"
-        echoColor yellow "$(i18n client_singbox_mimic_skip)"
+        echoColor yellow "$(msg client_mihomo_mimic_skip)"
+        echoColor yellow "$(msg client_singbox_mimic_skip)"
     else
         generateMihomoYaml || return 1
         generateSingboxJson || return 1
     fi
     if subscriptionEnabled; then subscriptionRefresh || return 1; fi
-    echo -e "\n$(i18n client_config_done)"
+    echo -e "\n$(msg client_config_done)"
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 )
 

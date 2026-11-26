@@ -51,7 +51,7 @@ installWarpVerified() (
     local mode="$1" temp
     [[ "${HIHY_WARP_URL:-}" =~ ^https://gitlab\.com/fscarmen/warp/-/raw/[0-9a-f]{40}/menu\.sh$ ]] \
         && isValidSHA256 "${HIHY_WARP_SHA256:-}" \
-        || { securityError 'WARP automatic installation requires a reviewed commit URL and SHA256. Install WARP separately or supply both.'; return 1; }
+        || { securityError '安装 WARP 需要固定提交地址和 SHA256；也可以先自行安装 WARP。'; return 1; }
     temp=$(secureTempDir) || return 1
     trap 'rm -rf -- "$temp"' EXIT
     downloadVerifiedFile "$HIHY_WARP_URL" "$temp/menu.sh" "$HIHY_WARP_SHA256" || return 1

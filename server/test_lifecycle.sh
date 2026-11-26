@@ -14,6 +14,9 @@ cleanup() {
     rm -rf -- "$TMP"
 }
 trap cleanup EXIT
+mkdir "$TMP/standalone installer"
+cp "$PACKAGE_DIR/install.sh" "$TMP/standalone installer/install.sh"
+PACKAGE_DIR="$TMP/standalone installer"
 if [ ! -e /usr/bin/yq ]; then
     printf '#!/bin/sh\nprintf system-yq\\n\n' >/usr/bin/yq
     chmod 755 /usr/bin/yq
@@ -35,7 +38,13 @@ iptables -C INPUT -p udp --dport 19999 -m comment --comment hihy-external-test -
 iptables -t nat -S "$chain" >/dev/null
 crontab -l | grep -Fq 'hihy cronTask external-test'
 printf 'PASS: uninstall preserves system yq, unrelated firewall chain and cron\n'
-HIHY_AUTO_IP=127.0.0.1 HIHY_AUTO_PORT=34567 HIHY_AUTO_PASSWORD=test-lifecycle bash "$PACKAGE_DIR/install.sh" --auto --lang en >"$TMP/install.log" 2>&1 || { tail -30 "$TMP/install.log"; exit 1; }
+printf '0\n' | bash "$PACKAGE_DIR/install.sh" >"$TMP/menu.log" 2>&1 || { tail -30 "$TMP/menu.log"; exit 1; }
+grep -q '部署' "$TMP/menu.log"
+[ -x /usr/bin/hihy ] && [ -x /etc/hihy/bin/yq ]
+[ ! -e /etc/hihy/conf/config.yaml ] && [ ! -e /etc/hihy/i18n ]
+[ "$(stat -c %a /etc/hihy/conf)" = 700 ]
+printf 'PASS: a single downloaded file prepares dependencies and private directories, then opens the Chinese menu\n'
+HIHY_AUTO_IP=127.0.0.1 HIHY_AUTO_PORT=34567 HIHY_AUTO_PASSWORD=test-lifecycle bash "$PACKAGE_DIR/install.sh" --auto >"$TMP/install.log" 2>&1 || { tail -30 "$TMP/install.log"; exit 1; }
 [ "$(sha256sum /usr/bin/yq)" = "$yq_before" ]
 [ "$(stat -c %a /etc/hihy/conf/config.yaml)" = 600 ]
 [ "$(stat -c %a /etc/hihy/cert/www.bing.com.key)" = 600 ]
@@ -46,7 +55,7 @@ if bash "$PACKAGE_DIR/install.sh" --auto >"$TMP/reinstall.log" 2>&1; then echo '
 [ "$(sha256sum /etc/hihy/conf/config.yaml)" = "$config_before" ]
 hihy restart >"$TMP/restart.log" 2>&1
 hihy checkStatus >"$TMP/status.log"
-grep -q running "$TMP/status.log"
+grep -q '运行' "$TMP/status.log"
 hihy stop >"$TMP/stop.log" 2>&1
 [ ! -f /var/run/hihy.pid ]
 hihy start >"$TMP/start.log" 2>&1
@@ -54,5 +63,5 @@ pid=$(cat /var/run/hihy.pid)
 [ "$(readlink /proc/$pid/exe)" = /etc/hihy/bin/appS ]
 [ "$(ps -o cls= -p "$pid" | tr -d ' ')" != RR ]
 /usr/bin/hihy 11 >"$TMP/disabled-update.log"
-grep -q 'self-update is disabled' "$TMP/disabled-update.log"
+grep -q '不提供脚本更新' "$TMP/disabled-update.log"
 printf 'PASS: install, private files, existing-install refusal, restart, stop/start and disabled self-update\n'

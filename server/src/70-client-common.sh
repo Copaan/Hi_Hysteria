@@ -99,7 +99,7 @@ loadClientParams() {
     HIHY_CP_echConfig=""
     if [ "$HIHY_CP_echStatus" = "true" ]; then
         HIHY_CP_echConfig=$(getBackupValueOrDefault "$backup" "ech_config" "")
-        [ -n "$HIHY_CP_echConfig" ] || { securityError "ECH client configuration is missing."; return 1; }
+        [ -n "$HIHY_CP_echConfig" ] || { securityError "缺少 ECH 客户端配置。"; return 1; }
     fi
 
     # Mimic(v1.17 起记录):伪装 TCP,仅原生客户端可用
@@ -107,7 +107,7 @@ loadClientParams() {
     if [ -n "$HIHY_CP_pinSHA256" ]; then
         isValidFingerprint "$HIHY_CP_pinSHA256" || return 1
     elif [ "$HIHY_CP_insecure" = true ]; then
-        securityError "Refusing to export a client without certificate verification."
+        securityError "缺少证书验证信息，无法导出客户端配置。"
         return 1
     fi
     return 0

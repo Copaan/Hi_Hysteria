@@ -36,7 +36,7 @@ downloadMimicDeb() {
     expect=$(awk '{print $1}' "${out}.sha256" | head -n 1)
     actual=$(sha256sum "$out" | awk '{print $1}')
     if ! isValidSHA256 "$expect" || [ "${expect,,}" != "$actual" ]; then
-        echoColor red "$(i18n mimic_download_fail)"
+        echoColor red "$(msg mimic_download_fail)"
         rm -f "$out" "${out}.sha256"
         return 1
     fi
@@ -64,7 +64,7 @@ extractMimicDeb() {
 # Debian/Ubuntu 整装路径:apt 解析依赖(dkms/linux-headers)并触发 DKMS 自动编译
 installMimicViaApt() {
     command -v apt-get >/dev/null 2>&1 || return 1
-    echo -e "$(i18n mimic_installing)"
+    echo -e "$(msg mimic_installing)"
     if apt-get install -y --no-install-recommends "$1" "$2" >/dev/null 2>&1; then
         return 0
     fi
@@ -79,18 +79,18 @@ installMimicManual() {
     local root="$tmpdir/root"
     mkdir -p "$root"
     if ! extractMimicDeb "$tmpdir/mimic.deb" "$root" || [ ! -f "$root/usr/sbin/mimic" ]; then
-        echoColor yellow "$(i18n mimic_extract_fail)"
+        echoColor yellow "$(msg mimic_extract_fail)"
         return 1
     fi
     # 注意:不能用 install 命令——脚本内已有 install() 函数,同名函数优先于外部命令
     cp "$root/usr/sbin/mimic" "$HIHY_MIMIC_BIN_DIR/mimic"
     chmod 755 "$HIHY_MIMIC_BIN_DIR/mimic"
     if ! command -v dkms >/dev/null 2>&1; then
-        echoColor yellow "$(i18n mimic_module_manual_hint)"
+        echoColor yellow "$(msg mimic_module_manual_hint)"
         return 1
     fi
     if ! extractMimicDeb "$tmpdir/mimic-dkms.deb" "$root" || [ ! -d "$root/usr/src/mimic-${ver}" ]; then
-        echoColor yellow "$(i18n mimic_module_manual_hint)"
+        echoColor yellow "$(msg mimic_module_manual_hint)"
         return 1
     fi
     local src_dir="$HIHY_DKMS_SRC_DIR/mimic-${ver}"
@@ -104,7 +104,7 @@ installMimicManual() {
     fi
     dkms remove -m mimic -v "$ver" --all >/dev/null 2>&1 || true
     rm -rf "$src_dir"
-    echoColor yellow "$(i18n mimic_module_manual_hint)"
+    echoColor yellow "$(msg mimic_module_manual_hint)"
     return 1
 }
 
@@ -129,7 +129,7 @@ installMimic() {
     case "$arch" in
         amd64 | arm64) ;;
         *)
-            echoColor yellow "$(i18n mimic_unsupported_arch "$(uname -m)")"
+            echoColor yellow "$(msg mimic_unsupported_arch "$(uname -m)")"
             return 1
             ;;
     esac
@@ -151,10 +151,10 @@ installMimic() {
     rm -rf "$tmpdir"
     [ "$ok" -ne 0 ] && return 1
     if ! modprobe mimic 2>/dev/null; then
-        echoColor yellow "$(i18n mimic_module_load_fail)"
+        echoColor yellow "$(msg mimic_module_load_fail)"
         return 1
     fi
-    echoColor green "$(i18n mimic_installed "$tag")"
+    echoColor green "$(msg mimic_installed "$tag")"
     enableMimicBootModule "$modules_dir"
     return 0
 }

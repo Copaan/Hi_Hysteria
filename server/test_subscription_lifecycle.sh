@@ -13,7 +13,6 @@ cleanup() {
 }
 trap cleanup EXIT
 cp "$ROOT/server/hy2.sh" /usr/bin/hihy; chmod 700 /usr/bin/hihy
-for lang in en zh fa ru; do cp "$ROOT/server/i18n/$lang.json" "/etc/hihy/i18n/hy2.sh.$lang.json"; chmod 600 "/etc/hihy/i18n/hy2.sh.$lang.json"; done
 subscriptionPreparePaths
 subscriptionInstallCaddy
 cp -p "$HIHY_SUB_LIB/caddy" "$TMP/caddy.original"

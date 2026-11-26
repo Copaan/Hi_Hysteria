@@ -24,7 +24,7 @@ installPrivateYq() {
     case "$arch" in
         amd64) expected=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973 ;;
         arm64) expected=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67 ;;
-        *) securityError "No pinned yq artifact for $arch."; return 1 ;;
+        *) securityError "当前架构 $arch 没有对应的 yq 下载文件。"; return 1 ;;
     esac
     mkdir -p "$(dirname "$HIHY_YQ_BIN")" || return 1
     [ ! -L "$HIHY_YQ_BIN" ] || return 1
@@ -65,7 +65,7 @@ validateCoreArchitecture() {
 # Fetch a version once, verify its manifest and artifact, then expose the candidate.
 fetchHysteriaCandidate() (
     local version="$1" dest="$2" arch base temp expected
-    validCoreVersion "$version" || { securityError 'Invalid stable Hysteria version.'; return 1; }
+    validCoreVersion "$version" || { securityError 'Hysteria 版本格式无效。'; return 1; }
     arch=$(getHysteriaCoreArch)
     [ -n "$arch" ] || return 1
     base="https://github.com/HyNetworks/hysteria/releases/download/$version"
@@ -77,11 +77,11 @@ fetchHysteriaCandidate() (
         downloadToFile "$base/hashes.txt" "$temp/hashes" || return 1
     fi
     expected=$(awk -v file="hysteria-linux-$arch" '$2 == file || $2 == "build/" file {print $1}' "$temp/hashes")
-    isValidSHA256 "$expected" || { securityError "Missing or duplicate checksum for $arch."; return 1; }
+    isValidSHA256 "$expected" || { securityError "架构 $arch 的校验值缺失或重复。"; return 1; }
     downloadVerifiedFile "$base/hysteria-linux-$arch" "$temp/core" "$expected" || return 1
-    validateCoreArchitecture "$temp/core" "$arch" || { securityError 'Downloaded core has the wrong ELF architecture.'; return 1; }
+    validateCoreArchitecture "$temp/core" "$arch" || { securityError '下载的内核架构不匹配。'; return 1; }
     chmod 700 "$temp/core" || return 1
-    [ "$(getLocalHysteriaVersion "$temp/core")" = "$version" ] || { securityError 'Downloaded core version/architecture check failed.'; return 1; }
+    [ "$(getLocalHysteriaVersion "$temp/core")" = "$version" ] || { securityError '下载的内核版本或架构校验失败。'; return 1; }
     [ ! -L "$dest" ] || return 1
     cp -- "$temp/core" "$dest" && chmod 700 "$dest"
 )
@@ -129,7 +129,7 @@ updateHysteriaCore() (
         stop || return 1
     fi
     startInstallValidationProcess "$HIHY_ROOT_DIR/conf/config.yaml" "$temp/validation.log" "$temp/candidate" || return 1
-    waitForValidationOutcome "$temp/validation.log" 60 || { securityError 'Candidate core failed configuration validation.'; return 1; }
+    waitForValidationOutcome "$temp/validation.log" 60 || { securityError '新内核未通过配置验证。'; return 1; }
     stopValidationProcess
     switched=true
     mv -f -- "$temp/candidate" "$core" || return 1

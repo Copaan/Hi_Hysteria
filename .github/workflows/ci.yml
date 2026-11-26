@@ -21,12 +21,12 @@ jobs:
           source server/hy2.sh
           installPrivateYq
           echo "$(dirname "$HIHY_YQ_BIN")" >>"$GITHUB_PATH"
-      - name: Check generated scripts, integrity and translations
+      - name: Check generated scripts, integrity and Chinese messages
         run: |
           bash scripts/build.sh
-          git diff --exit-code server/hy2.sh server/SHA256SUMS
+          git diff --exit-code server/hy2.sh server/install.sh server/SHA256SUMS
           bash server/test_build.sh
-          bash scripts/i18n-validate.sh
+          python3 server/test_messages.py
           shellcheck -S error server/hy2.sh server/install.sh server/test_*.sh scripts/*.sh
       - name: Focused tests
         run: |
@@ -36,6 +36,7 @@ jobs:
           bash server/test_auto_config.sh
           bash server/test_client_config.sh
           bash scripts/package.sh
+          python3 server/test_package.py
   linux-integration:
     needs: lint-and-test
     runs-on: ubuntu-24.04

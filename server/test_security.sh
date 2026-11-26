@@ -55,7 +55,6 @@ assert test "$(stat -c %a "$HIHY_EXPORT_DIR")" = 700
     curl() { touch "$TEST_ROOT/unexpected-network"; return 1; }
     wget() { touch "$TEST_ROOT/unexpected-network"; return 1; }
     getServiceRunState() { echo none; }
-    HIHY_I18N_DIR="$ROOT/server/i18n"
     show_menu >/dev/null
     hihyUpdate >/dev/null
     assert test ! -e "$TEST_ROOT/unexpected-network"

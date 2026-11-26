@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.20-secure.1"
+hihyV="ver1.21-secure.1"
 # =============================================================================
 # GENERATED FILE — DO NOT EDIT.
 # Source lives in server/src/*.sh. Edit there and run: bash scripts/build.sh
@@ -29,6 +29,12 @@ if [ -x "$HIHY_YQ_BIN" ]; then
     export PATH="$(dirname "$HIHY_YQ_BIN"):$PATH"
 fi
 HIHY_RULESET_MIRROR="${HIHY_RULESET_MIRROR:-https://cdn.jsdelivr.net/gh}"
+HIHY_SUB_ETC="${HIHY_SUB_ETC:-/etc/hihy-sub}"
+HIHY_SUB_STATE="${HIHY_SUB_STATE:-/var/lib/hihy-sub}"
+HIHY_SUB_LIB="${HIHY_SUB_LIB:-/usr/local/lib/hihy-sub}"
+HIHY_SUB_UNIT="${HIHY_SUB_UNIT:-/etc/systemd/system/hihy-sub.service}"
+HIHY_SUB_USER="hihy-sub"
+HIHY_CADDY_VERSION="2.11.9"
 
 # ----- 05-security.sh -----
 
@@ -389,6 +395,7 @@ show_menu() {
     menuItem 10 "$(i18n menu_item_switch_ip)"
     menuItem 12 "$(i18n menu_item_acl)"
     menuItem 15 "$(i18n menu_item_socks5)"
+    menuItem 17 "$(i18n menu_item_subscription)"
 
     menuSection "$(i18n menu_section_maintain)"
     menuItem 7 "$(i18n menu_item_update_core)"
@@ -2590,7 +2597,13 @@ validateHysteriaInputs() {
 # Apply a complete candidate with configuration, certificate and service rollback.
 writeHysteriaConfig() (
     local transaction candidate backup dir field value was_running=false stopped=false activated=false success=false timeout=15
+    local subscription_previous="" subscription_ready=false subscription_switched=false
     validateHysteriaInputs || return 1
+    if subscriptionEnabled; then
+        [ "$mimic_status" != true ] || { subscriptionError sub_incompatible; return 1; }
+        if [ "$masquerade_tcp" = true ] && [ "$port" = 443 ]; then subscriptionError sub_port_conflict; return 1; fi
+        subscription_previous=$(readlink "$HIHY_SUB_STATE/content/current") || return 1
+    fi
     mkdir -p "$HIHY_ROOT_DIR" || return 1
     [ ! -L "$HIHY_ROOT_DIR" ] || return 1
     transaction=$(mktemp -d "$HIHY_ROOT_DIR/.config.XXXXXXXX") || return 1
@@ -2600,6 +2613,10 @@ writeHysteriaConfig() (
         local rc=$? part
         stopValidationProcess
         if [ "$success" != true ]; then
+            if [ "$subscription_switched" = true ]; then
+                subscriptionRestoreSnapshot "$subscription_previous" || rc=1
+                subscriptionPruneSnapshots || rc=1
+            fi
             restoreFirewallLedger "$transaction/firewall.before" || rc=1
             if [ "$activated" = true ]; then
                 [ "$was_running" != true ] || stop >/dev/null 2>&1 || true
@@ -2623,6 +2640,10 @@ writeHysteriaConfig() (
     done
     HIHY_CONFIG_ROOT="$candidate"
     generateStagedConfig || return 1
+    if subscriptionEnabled; then
+        subscriptionRenderSnapshot "$candidate" "$transaction/subscription" || return 1
+        subscription_ready=true
+    fi
     if [ -f "$backup/acl/acl.txt" ]; then
         grep -Fxv 'reject(all, udp/443)' "$backup/acl/acl.txt" >"$candidate/acl/acl.txt" || [ $? -eq 1 ] || return 1
         if [ "$block_http3" = true ]; then printf '%s\n' 'reject(all, udp/443)' >>"$candidate/acl/acl.txt"; fi
@@ -2658,6 +2679,10 @@ writeHysteriaConfig() (
     if [ "$useAcme" = true ] && [ "$useDns" != true ]; then allowPort tcp 80 || return 1; fi
     secureInstallPermissions || return 1
     if [ "$was_running" = true ]; then start && [ "$(getServiceRunState)" = running ] || return 1; fi
+    if [ "$subscription_ready" = true ]; then
+        subscription_switched=true
+        subscriptionCommitSnapshot "$transaction/subscription" || return 1
+    fi
     if [ "${max_CRW:-0}" -gt 0 ]; then
         if sysctl -w "net.core.rmem_max=$max_CRW" "net.core.wmem_max=$max_CRW" >/dev/null 2>&1; then
             if [ ! -e /etc/sysctl.d/99-hihy.conf ] || [ -f "$HIHY_ROOT_DIR/conf/sysctl-owned" ]; then
@@ -2667,6 +2692,7 @@ writeHysteriaConfig() (
         fi
     fi
     success=true
+    [ "$subscription_ready" != true ] || subscriptionPruneSnapshots || true
 )
 
 # ----- 47-edits.sh -----
@@ -3300,7 +3326,7 @@ checkStatus() {
 formatFirewallPortSpec() { printf '%s\n' "${1//-/:}"; }
 hasFirewallToken() { tr -s '[:space:]' '\n' | grep -Fxq -- "$1"; }
 
-firewallLedger() { printf '%s/conf/firewall.tsv\n' "$HIHY_ROOT_DIR"; }
+firewallLedger() { printf '%s\n' "${HIHY_FIREWALL_LEDGER:-$HIHY_ROOT_DIR/conf/firewall.tsv}"; }
 snapshotFirewallLedger() {
     local dest="$1" source
     source=$(firewallLedger)
@@ -3322,11 +3348,11 @@ firewallRule() {
         iptables|ip6tables)
             bin="$backend"
             if [ "$action" = add ]; then
-                "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null \
-                    || "$bin" -I INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+                "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null \
+                    || "$bin" -I INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT
             else
-                if "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then
-                    "$bin" -D INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+                if "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then
+                    "$bin" -D INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT
                 fi
             fi ;;
         ufw)
@@ -3358,14 +3384,14 @@ allowPort() {
     fi
     record="$backend|$proto|$port"
     if ! grep -Fxq -- "$record" "$ledger"; then
-        if [[ "$backend" = iptables ]] && iptables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+        if [[ "$backend" = iptables ]] && iptables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then return 0; fi
         printf '%s\n' "$record" >>"$ledger" || return 1
     fi
     firewallRule add "$backend" "$proto" "$port" || return 1
     if [ "$backend" = iptables ] && command -v ip6tables >/dev/null 2>&1 && ip6tables -L INPUT >/dev/null 2>&1; then
         record="ip6tables|$proto|$port"
         if ! grep -Fxq -- "$record" "$ledger"; then
-            if ip6tables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+            if ip6tables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then return 0; fi
             printf '%s\n' "$record" >>"$ledger" || return 1
         fi
         firewallRule add ip6tables "$proto" "$port" || return 1
@@ -3440,6 +3466,7 @@ checkRoot() {
 }
 
 uninstall() {
+    subscriptionUninstall || return 1
     local install_state
     install_state=$(classifyInstallState)
     if [ "$install_state" = "not-installed" ]; then
@@ -3801,6 +3828,10 @@ generate_client_config() (
     chmod 600 "$client_configfile" && mv -f -- "$client_configfile" "$destination" || return 1
     client_configfile="$destination"
     trap - EXIT
+    if [ "${HIHY_CLIENT_QUIET:-false}" = true ]; then
+        generateMihomoYaml && generateSingboxJson
+        return $?
+    fi
     # 在生成配置前添加分隔线
     echo -e "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "$(i18n client_config_generating)"
@@ -3872,7 +3903,7 @@ generate_client_config() (
     echoColor green "↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓$(i18n client_config_copy_marker)↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓"
     cat "${client_configfile}"
     echoColor green "↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑$(i18n client_config_copy_marker)↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
-    # mihomo/sing-box 都不支持 mimic;gecko 时 mihomo 本就跳过
+    # Mimic 仅由原生客户端导出，其余已选择参数按各客户端能力输出。
     if [ "${HIHY_CP_mimicStatus}" == "true" ]; then
         echoColor yellow "$(i18n client_mihomo_mimic_skip)"
         echoColor yellow "$(i18n client_singbox_mimic_skip)"
@@ -3880,6 +3911,7 @@ generate_client_config() (
         generateMihomoYaml || return 1
         generateSingboxJson || return 1
     fi
+    if subscriptionEnabled; then subscriptionRefresh || return 1; fi
     echo -e "\n$(i18n client_config_done)"
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 )
@@ -3895,7 +3927,7 @@ generate_client_config() (
 #   5. 规则镜像改用 jsdelivr(HIHY_RULESET_MIRROR 可覆盖)
 #   6. 删除 GEOIP 规则:LAN 由 lancidr 覆盖;CN 由 cncidr 覆盖,且 GEOIP 会强制下载 MMDB,
 #      下载失败会让整份配置启动失败
-#   7. gecko 混淆:由调用方拦住,不走到此函数
+#   7. Gecko 和 ECH 按 mihomo 1.19.34 的字段输出；Mimic 不受支持
 generateMihomoYaml() (
     loadClientParams || return 1
     [ "$HIHY_CP_mimicStatus" != true ] || return 1
@@ -4137,6 +4169,8 @@ EOF
 # ----- 76-client-singbox.sh -----
 # Generate a sing-box 1.14+ configuration with structured value encoding.
 generateSingboxJson() (
+    local profile="${1:-desktop}"
+    case "$profile" in desktop|app) ;; *) return 1 ;; esac
     loadClientParams || return 1
     [ "$HIHY_CP_mimicStatus" != true ] || { securityError 'sing-box does not support Mimic.'; return 1; }
     local destination outFile json_file root="$HIHY_ROOT_DIR" mirror="$HIHY_RULESET_MIRROR" ca_file n up_num down_num
@@ -4219,11 +4253,553 @@ JSON
         addOrUpdateYaml "$outFile" outbounds[0].obfs.type "$HIHY_CP_obfsType" string || return 1
         addOrUpdateYaml "$outFile" outbounds[0].obfs.password "$HIHY_CP_obfsPass" string || return 1
     fi
+    if [ "$profile" = app ]; then
+        yq -i '.inbounds = [{"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"], "mtu": 1500, "auto_route": true}] | .route.auto_detect_interface = true | .route.rules = [{"port": 53, "action": "hijack-dns"}] + .route.rules | del(.experimental.clash_api)' "$outFile" || return 1
+    fi
     yq -o=json '.' "$outFile" >"$json_file" || return 1
     [ ! -L "$destination" ] || return 1
     chmod 600 "$json_file" && mv -f -- "$json_file" "$destination" || return 1
     printf 'sing-box 1.14+: %s\n' "$destination"
 )
+
+# ----- 78-subscription-render.sh -----
+# Read private subscription state without touching the network.
+subscriptionRead() {
+    [ ! -L "$HIHY_SUB_ETC/state.yaml" ] || return 1
+    if [ ! -f "$HIHY_SUB_ETC/state.yaml" ]; then printf '%s\n' "${2:-}"; return 0; fi
+    getBackupValueOrDefault "$HIHY_SUB_ETC/state.yaml" "$1" "${2:-}"
+}
+subscriptionPathOwned() {
+    local dir="$1"
+    [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/.hihy-sub-owned" ] && [ ! -L "$dir/.hihy-sub-owned" ] \
+        && [ "$(stat -c %u "$dir/.hihy-sub-owned")" = 0 ] \
+        && [ "$(cat "$dir/.hihy-sub-owned")" = hihy-subscription-v1 ]
+}
+subscriptionOwned() { subscriptionPathOwned "$HIHY_SUB_ETC"; }
+subscriptionEnabled() { subscriptionOwned && [ "$(subscriptionRead enabled false)" = true ]; }
+subscriptionError() { securityError "$(i18n "$1")"; }
+
+subscriptionValidatePaths() {
+    local dir
+    for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB" "$HIHY_SUB_UNIT"; do
+        [[ "$dir" =~ ^/[A-Za-z0-9_./-]+$ ]] && [ "${#dir}" -gt 8 ] || return 1
+        case "$dir/" in */../*|*/./*) return 1 ;; esac
+        [ ! -L "$dir" ] || return 1
+    done
+}
+subscriptionValidDomain() { isValidDomain "$1" && [[ "$1" = *.* && "$1" =~ [A-Za-z] ]]; }
+subscriptionValidToken() { [[ "$1" =~ ^[a-f0-9]{64}$ ]]; }
+
+# Render only client-facing credentials into one private, complete generation.
+subscriptionRenderSnapshot() (
+    local source_root="$1" output="$2" remarks file
+    [ -s "$source_root/conf/config.yaml" ] && [ -s "$source_root/conf/backup.yaml" ] || return 1
+    [ "$(getBackupValueOrDefault "$source_root/conf/backup.yaml" mimic_status false)" != true ] \
+        && [ "$(getBackupValueOrDefault "$source_root/conf/config.yaml" mimic.enabled false)" != true ] \
+        || { subscriptionError sub_incompatible; return 1; }
+    local tcp_listen
+    tcp_listen=$(getBackupValueOrDefault "$source_root/conf/config.yaml" masquerade.listenHTTPS '')
+    [[ "$tcp_listen" != *:443 ]] || { subscriptionError sub_port_conflict; return 1; }
+    mkdir -p "$output" || return 1
+    [ ! -L "$output" ] || return 1
+    HIHY_ROOT_DIR="$source_root"
+    HIHY_EXPORT_DIR="$output/files"
+    HIHY_CLIENT_ALLOW_LAN=false
+    HIHY_CLIENT_QUIET=true
+    if ! generate_client_config >"$output/render.log" 2>&1 || ! generateSingboxJson app >>"$output/render.log" 2>&1; then
+        subscriptionError sub_render_failed; return 1
+    fi
+    remarks=$(getYamlValue "$source_root/conf/backup.yaml" remarks) || return 1
+    cp -- "$(clientOutputPath "$remarks" v2rayN.yaml)" "$output/hysteria.yaml" || return 1
+    cp -- "$(clientOutputPath "$remarks" mihomo.yaml)" "$output/mihomo.yaml" || return 1
+    cp -- "$(clientOutputPath "$remarks" singbox.json)" "$output/singbox.json" || return 1
+    yq -e '.auth != null and .server != null and .socks5.listen == "127.0.0.1:20808"' "$output/hysteria.yaml" >/dev/null || return 1
+    yq -e '.proxies[0].type == "hysteria2" and .allow-lan == false' "$output/mihomo.yaml" >/dev/null || return 1
+    yq -e '.inbounds[0].type == "tun" and .outbounds[0].type == "hysteria2" and .outbounds[0].tls.insecure == false' "$output/singbox.json" >/dev/null || return 1
+    yq -e '.trafficStats == null and .acme == null and .tls.key == null' "$output/hysteria.yaml" >/dev/null || return 1
+    for file in hysteria.yaml mihomo.yaml singbox.json; do
+        chmod 600 "$output/$file" || return 1
+    done
+    rm -rf -- "$output/files"
+    rm -f -- "$output/render.log"
+)
+
+# Generate an exact-path, format-negotiating Caddy site with no directory listing.
+subscriptionWriteCaddyConfig() {
+    local domain="$1" token="$2" out="$3" name format file content_type ua
+    subscriptionValidatePaths && subscriptionValidDomain "$domain" && subscriptionValidToken "$token" || return 1
+    [ ! -L "$out" ] || return 1
+    cat >"$out" <<EOF
+{
+    admin off
+    persist_config off
+    auto_https disable_redirects
+    log {
+        output discard
+    }
+    servers {
+        protocols h1 h2
+    }
+    storage file_system {
+        root $HIHY_SUB_STATE/caddy
+    }
+}
+https://$domain {
+    tls {
+        issuer acme {
+            dir https://acme-v02.api.letsencrypt.org/directory
+            disable_http_challenge
+        }
+    }
+    header {
+        Cache-Control "private, no-store, max-age=0"
+        Vary "User-Agent"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+        -ETag
+        -Last-Modified
+    }
+    @authorized path /s/$token
+    handle @authorized {
+        @read method GET HEAD
+        handle @read {
+            route {
+                root * $HIHY_SUB_STATE/content/current
+                request_header -If-None-Match
+                request_header -If-Modified-Since
+                request_header -Range
+EOF
+    for format in hysteria mihomo singbox; do
+        case "$format" in
+            hysteria) file=hysteria.yaml; content_type='application/yaml; charset=utf-8' ;;
+            mihomo) file=mihomo.yaml; content_type='application/yaml; charset=utf-8' ;;
+            singbox) file=singbox.json; content_type='application/json; charset=utf-8' ;;
+        esac
+        cat >>"$out" <<EOF
+                @format_$format query format=$format
+                handle @format_$format {
+                    rewrite * /$file
+                    header Content-Type "$content_type"
+                    file_server
+                }
+EOF
+    done
+    cat >>"$out" <<'EOF'
+                @other_format query format=*
+                handle @other_format {
+                    respond "Unsupported subscription format." 400
+                }
+EOF
+    for name in hysteria mihomo singbox; do
+        case "$name" in
+            hysteria) file=hysteria.yaml; content_type='application/yaml; charset=utf-8'; ua='(?i)^v2rayn([/ ]|$)' ;;
+            mihomo) file=mihomo.yaml; content_type='application/yaml; charset=utf-8'; ua='(?i)^(clash-verge|clashmeta|mihomo|clash)([/ ]|$)' ;;
+            singbox) file=singbox.json; content_type='application/json; charset=utf-8'; ua='(?i)^(SFA|SFI|SFM)([/ ]|$)' ;;
+        esac
+        cat >>"$out" <<EOF
+                @ua_$name header_regexp ua_$name User-Agent "$ua"
+                handle @ua_$name {
+                    rewrite * /$file
+                    header Content-Type "$content_type"
+                    file_server
+                }
+EOF
+    done
+    cat >>"$out" <<'EOF'
+                handle {
+                    respond "Unknown client. Specify format=hysteria, mihomo or singbox." 400
+                }
+            }
+        }
+        handle {
+            respond "Method not allowed." 405
+        }
+    }
+    handle {
+        respond "Not found." 404
+    }
+}
+EOF
+    chmod 600 "$out"
+}
+
+# Publish one immutable generation; Caddy can read but cannot change these files.
+subscriptionCommitSnapshot() (
+    local source_dir="$1" generation="" tmp="" previous committed=false
+    subscriptionPathOwned "$HIHY_SUB_STATE" || return 1
+    trap 'if [ "$committed" != true ] && [ -n "$generation" ]; then rm -rf -- "$generation"; fi; [ -z "$tmp" ] || rm -f -- "$tmp"' EXIT
+    generation=$(mktemp -d "$HIHY_SUB_STATE/content/generations/g.XXXXXXXX") || return 1
+    local file
+    for file in hysteria.yaml mihomo.yaml singbox.json; do
+        [ -s "$source_dir/$file" ] && [ ! -L "$source_dir/$file" ] || return 1
+        cp -- "$source_dir/$file" "$generation/$file" || return 1
+    done
+    chown -R "root:$HIHY_SUB_USER" "$generation" && chmod 750 "$generation" \
+        && chmod 640 "$generation/"* || { rm -rf -- "$generation"; return 1; }
+    previous=$(readlink "$HIHY_SUB_STATE/content/current" 2>/dev/null) || previous=""
+    if [ -n "$previous" ]; then
+        [[ "$previous" =~ ^generations/g\.[A-Za-z0-9]+$ ]] || return 1
+        ln -sfn -- "$previous" "$HIHY_SUB_STATE/content/previous" || return 1
+    fi
+    tmp="$HIHY_SUB_STATE/content/.current.$BASHPID"
+    [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
+    ln -s "generations/$(basename "$generation")" "$tmp" && mv -Tf -- "$tmp" "$HIHY_SUB_STATE/content/current" || return 1
+    committed=true
+)
+
+subscriptionRestoreSnapshot() {
+    local target="$1" temp="$HIHY_SUB_STATE/content/.restore.$BASHPID"
+    if [ -z "$target" ]; then rm -f -- "$HIHY_SUB_STATE/content/current"; return; fi
+    [[ "$target" =~ ^generations/g\.[A-Za-z0-9]+$ ]] && [ -d "$HIHY_SUB_STATE/content/$target" ] || return 1
+    [ ! -e "$temp" ] && [ ! -L "$temp" ] || return 1
+    ln -s "$target" "$temp" && mv -Tf -- "$temp" "$HIHY_SUB_STATE/content/current"
+}
+
+subscriptionPruneSnapshots() {
+    local current previous dir
+    subscriptionPathOwned "$HIHY_SUB_STATE" || return 1
+    current=$(readlink "$HIHY_SUB_STATE/content/current" 2>/dev/null) || current=""
+    previous=$(readlink "$HIHY_SUB_STATE/content/previous" 2>/dev/null) || previous=""
+    for dir in "$HIHY_SUB_STATE/content/generations/"g.*; do
+        [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+        [ "generations/$(basename "$dir")" = "$current" ] || [ "generations/$(basename "$dir")" = "$previous" ] || rm -rf -- "$dir"
+    done
+}
+
+subscriptionRefresh() (
+    subscriptionEnabled || { subscriptionError sub_not_enabled; return 1; }
+    local dir
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    subscriptionRenderSnapshot "$HIHY_ROOT_DIR" "$dir/snapshot" && subscriptionCommitSnapshot "$dir/snapshot" || return 1
+    subscriptionPruneSnapshots || return 1
+    printf '%s\n' "$(i18n sub_refreshed)"
+)
+
+# ----- 79-subscription-service.sh -----
+subscriptionFirewall() {
+    local HIHY_FIREWALL_LEDGER="$HIHY_SUB_ETC/firewall.tsv" HIHY_FIREWALL_OWNER=hihy-subscription
+    case "$1" in
+        add) allowPort tcp 443 ;;
+        remove) delHihyFirewallPort tcp ;;
+        restore) firewallRestore ;;
+        *) return 1 ;;
+    esac
+}
+subscriptionFirewallRestore() { subscriptionOwned && subscriptionFirewall restore; }
+subscriptionUnitOwned() { [ -f "$HIHY_SUB_UNIT" ] && [ ! -L "$HIHY_SUB_UNIT" ] && grep -Fxq '# Managed-by: hihy-subscription-v1' "$HIHY_SUB_UNIT"; }
+
+subscriptionCheckPlatform() {
+    [ "$(id -u)" = 0 ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null || { subscriptionError sub_platform; return 1; }
+    grep -Eq '^ID=(debian|ubuntu|"debian"|"ubuntu")$' /etc/os-release || { subscriptionError sub_platform; return 1; }
+    [ -s "$HIHY_ROOT_DIR/conf/config.yaml" ] && [ -s "$HIHY_ROOT_DIR/conf/backup.yaml" ] || { subscriptionError sub_need_install; return 1; }
+    subscriptionValidatePaths || return 1
+}
+
+# DNS must resolve before the local, publicly trusted TLS readiness check can succeed.
+subscriptionCheckDomain() {
+    local name="$1" records
+    subscriptionValidDomain "$name" || { subscriptionError sub_bad_domain; return 1; }
+    records=$( { dig +time=3 +tries=1 +short A "$name"; dig +time=3 +tries=1 +short AAAA "$name"; } 2>/dev/null)
+    printf '%s\n' "$records" | grep -Eq '^([0-9]+\.){3}[0-9]+$|^[[:xdigit:]:]+:[[:xdigit:]:]+$' || { subscriptionError sub_dns_failed; return 1; }
+}
+
+subscriptionCheckPort() {
+    if lsof -nP -iTCP:443 -sTCP:LISTEN >/dev/null 2>&1; then subscriptionError sub_port_conflict; return 1; fi
+}
+
+# Install the official pinned archive into a project-owned binary directory.
+subscriptionInstallCaddy() (
+    local arch expected temp actual
+    arch=$(getArchitecture)
+    case "$arch" in
+        amd64) expected=5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb ;;
+        arm64) expected=5e377cff994fc9362a6fcf695c53f226cfca3a3ef85bd3a3687cf252d6310165 ;;
+        *) subscriptionError sub_arch; return 1 ;;
+    esac
+    if [ -e "$HIHY_SUB_LIB/caddy" ]; then
+        [ ! -L "$HIHY_SUB_LIB/caddy" ] && [ -f "$HIHY_SUB_LIB/caddy.sha256" ] && [ ! -L "$HIHY_SUB_LIB/caddy.sha256" ] || return 1
+        actual=$(sha256sum "$HIHY_SUB_LIB/caddy" | cut -d' ' -f1)
+        [ "$actual" = "$(cat "$HIHY_SUB_LIB/caddy.sha256")" ] && validateCoreArchitecture "$HIHY_SUB_LIB/caddy" "$arch" \
+            && [ "$("$HIHY_SUB_LIB/caddy" version | awk '{print $1}')" = "v$HIHY_CADDY_VERSION" ] || { subscriptionError sub_binary_invalid; return 1; }
+        return 0
+    fi
+    temp=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$temp"' EXIT
+    downloadVerifiedFile "https://github.com/caddyserver/caddy/releases/download/v$HIHY_CADDY_VERSION/caddy_${HIHY_CADDY_VERSION}_linux_$arch.tar.gz" "$temp/caddy.tar.gz" "$expected" || return 1
+    tar -xOf "$temp/caddy.tar.gz" caddy >"$temp/caddy" || return 1
+    validateCoreArchitecture "$temp/caddy" "$arch" || return 1
+    chmod 700 "$temp/caddy" || return 1
+    [ "$("$temp/caddy" version | awk '{print $1}')" = "v$HIHY_CADDY_VERSION" ] || return 1
+    actual=$(sha256sum "$temp/caddy" | cut -d' ' -f1)
+    cp -- "$temp/caddy" "$HIHY_SUB_LIB/.caddy.pending" && chmod 755 "$HIHY_SUB_LIB/.caddy.pending" \
+        && mv -f -- "$HIHY_SUB_LIB/.caddy.pending" "$HIHY_SUB_LIB/caddy" || return 1
+    printf '%s\n' "$actual" >"$HIHY_SUB_LIB/caddy.sha256"
+    chmod 600 "$HIHY_SUB_LIB/caddy.sha256"
+)
+
+# Claim only empty project namespaces and a new dedicated account.
+subscriptionPreparePaths() {
+    local dir
+    subscriptionValidatePaths || return 1
+    for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB"; do
+        if [ -e "$dir" ] && ! subscriptionPathOwned "$dir"; then subscriptionError sub_unowned; return 1; fi
+    done
+    if [ -e "$HIHY_SUB_UNIT" ] && ! subscriptionUnitOwned; then subscriptionError sub_unowned; return 1; fi
+    if id "$HIHY_SUB_USER" >/dev/null 2>&1 || getent group "$HIHY_SUB_USER" >/dev/null; then
+        subscriptionOwned && [ -f "$HIHY_SUB_ETC/account-owned" ] || { subscriptionError sub_unowned; return 1; }
+        [ "$(id -u "$HIHY_SUB_USER")" -gt 0 ] && [ "$(id -gn "$HIHY_SUB_USER")" = "$HIHY_SUB_USER" ] \
+            && [ -z "$(getent group "$HIHY_SUB_USER" | cut -d: -f4)" ] || return 1
+    fi
+    for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB"; do
+        if [ ! -e "$dir" ]; then
+            mkdir -m 700 -p "$dir" || return 1
+            printf '%s\n' hihy-subscription-v1 >"$dir/.hihy-sub-owned" || return 1
+        fi
+    done
+    if ! id "$HIHY_SUB_USER" >/dev/null 2>&1; then
+        useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$HIHY_SUB_USER" || return 1
+        : >"$HIHY_SUB_ETC/account-owned"
+    fi
+    chown "root:$HIHY_SUB_USER" "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" || return 1
+    chmod 750 "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" && chmod 755 "$HIHY_SUB_LIB" || return 1
+    for dir in "$HIHY_SUB_STATE/content" "$HIHY_SUB_STATE/content/generations"; do
+        [ ! -L "$dir" ] || return 1
+        mkdir -p "$dir" && chown "root:$HIHY_SUB_USER" "$dir" && chmod 750 "$dir" || return 1
+    done
+    [ ! -L "$HIHY_SUB_STATE/caddy" ] || return 1
+    mkdir -p "$HIHY_SUB_STATE/caddy" && chown "$HIHY_SUB_USER:$HIHY_SUB_USER" "$HIHY_SUB_STATE/caddy" && chmod 700 "$HIHY_SUB_STATE/caddy"
+}
+
+subscriptionWriteUnit() {
+    local out="$1"
+    subscriptionValidatePaths || return 1
+    cat >"$out" <<EOF
+# Managed-by: hihy-subscription-v1
+[Unit]
+Description=Hi Hysteria private subscription HTTPS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$HIHY_SUB_USER
+Group=$HIHY_SUB_USER
+UMask=0077
+Environment=HOME=$HIHY_SUB_STATE/caddy
+Environment=XDG_DATA_HOME=$HIHY_SUB_STATE/caddy
+Environment=XDG_CONFIG_HOME=$HIHY_SUB_STATE/caddy
+Environment=HIHY_SUB_ETC=$HIHY_SUB_ETC
+ExecStartPre=+$HIHY_BIN_LINK subscription-firewall-restore
+ExecStart=$HIHY_SUB_LIB/caddy run --config $HIHY_SUB_ETC/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=$HIHY_SUB_STATE/caddy
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$out"
+}
+
+# Probe through loopback with public-CA validation, keeping bearer URLs out of argv.
+subscriptionProbe() (
+    local domain="$1" token="$2" dir format file ok deadline=$((SECONDS + 120))
+    subscriptionValidDomain "$domain" && subscriptionValidToken "$token" || return 1
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        ok=true
+        for format in hysteria mihomo singbox; do
+            file="$format.yaml"; [ "$format" != singbox ] || file=singbox.json
+            printf 'url = "https://%s/s/%s?format=%s"\nresolve = "%s:443:127.0.0.1"\n' "$domain" "$token" "$format" "$domain" >"$dir/curl.conf"
+            if ! curl --proto '=https' --noproxy '*' --fail --silent --show-error --connect-timeout 3 --max-time 10 --config "$dir/curl.conf" -o "$dir/body" 2>"$dir/error" \
+                || ! cmp -s "$dir/body" "$HIHY_SUB_STATE/content/current/$file"; then ok=false; break; fi
+        done
+        [ "$ok" != true ] || return 0
+        sleep 2
+    done
+    subscriptionError sub_tls_failed
+)
+
+subscriptionValidateCaddy() (
+    local file="$1" dir
+    dir=$(secureTempDir) || return 1
+    trap 'rm -rf -- "$dir"' EXIT
+    runuser -u "$HIHY_SUB_USER" -- "$HIHY_SUB_LIB/caddy" validate --config "$file" --adapter caddyfile >"$dir/validation.log" 2>&1 \
+        || { subscriptionError sub_caddy_invalid; return 1; }
+)
+
+# Commit endpoint changes and restore the previous endpoint on any failed restart.
+subscriptionApplyEndpoint() (
+    local domain="$1" token="$2" dir previous="" was_active=false was_enabled=false success=false switched=false state_existed=false config_existed=false unit_existed=false
+    dir=$(secureTempDir) || return 1
+    rollbackSubscription() {
+        local rc=$?
+        if [ "$success" != true ] && [ "$switched" = true ]; then
+            systemctl stop hihy-sub.service >/dev/null 2>&1 || true
+            subscriptionRestoreSnapshot "$previous" || rc=1
+            subscriptionPruneSnapshots || rc=1
+            if [ "$config_existed" = true ]; then cp -p -- "$dir/Caddyfile.old" "$HIHY_SUB_ETC/Caddyfile" || rc=1; else rm -f -- "$HIHY_SUB_ETC/Caddyfile"; fi
+            if [ "$state_existed" = true ]; then cp -p -- "$dir/state.old" "$HIHY_SUB_ETC/state.yaml" || rc=1; else rm -f -- "$HIHY_SUB_ETC/state.yaml"; fi
+            if [ "$unit_existed" = true ]; then cp -p -- "$dir/unit.old" "$HIHY_SUB_UNIT" || rc=1; else systemctl disable hihy-sub.service >/dev/null 2>&1 || true; rm -f -- "$HIHY_SUB_UNIT"; fi
+            systemctl daemon-reload || rc=1
+            local HIHY_FIREWALL_LEDGER="$HIHY_SUB_ETC/firewall.tsv" HIHY_FIREWALL_OWNER=hihy-subscription
+            restoreFirewallLedger "$dir/firewall.old" || rc=1
+            if [ "$was_enabled" = true ]; then systemctl enable hihy-sub.service >/dev/null 2>&1 || rc=1; else systemctl disable hihy-sub.service >/dev/null 2>&1 || true; fi
+            if [ "$was_active" = true ]; then systemctl start hihy-sub.service || rc=1; fi
+        fi
+        rm -f -- "$HIHY_SUB_ETC/.Caddyfile.pending"
+        rm -rf -- "$dir"
+        return "$rc"
+    }
+    trap rollbackSubscription EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    [ ! -f "$HIHY_SUB_ETC/Caddyfile" ] || { cp -p "$HIHY_SUB_ETC/Caddyfile" "$dir/Caddyfile.old" || return 1; config_existed=true; }
+    [ ! -f "$HIHY_SUB_ETC/state.yaml" ] || { cp -p "$HIHY_SUB_ETC/state.yaml" "$dir/state.old" || return 1; state_existed=true; }
+    [ ! -f "$HIHY_SUB_UNIT" ] || { subscriptionUnitOwned && cp -p "$HIHY_SUB_UNIT" "$dir/unit.old" || return 1; unit_existed=true; }
+    previous=$(readlink "$HIHY_SUB_STATE/content/current" 2>/dev/null) || previous=""
+    systemctl is-active --quiet hihy-sub.service && was_active=true
+    systemctl is-enabled --quiet hihy-sub.service 2>/dev/null && was_enabled=true
+    HIHY_FIREWALL_LEDGER="$HIHY_SUB_ETC/firewall.tsv" snapshotFirewallLedger "$dir/firewall.old" || return 1
+    subscriptionRenderSnapshot "$HIHY_ROOT_DIR" "$dir/snapshot" || return 1
+    subscriptionWriteCaddyConfig "$domain" "$token" "$HIHY_SUB_ETC/.Caddyfile.pending" || return 1
+    chown "root:$HIHY_SUB_USER" "$HIHY_SUB_ETC/.Caddyfile.pending" && chmod 640 "$HIHY_SUB_ETC/.Caddyfile.pending" || return 1
+    subscriptionValidateCaddy "$HIHY_SUB_ETC/.Caddyfile.pending" || return 1
+    subscriptionWriteUnit "$dir/hihy-sub.service" || return 1
+    systemd-analyze verify "$dir/hihy-sub.service" >"$dir/unit-check.log" 2>&1 || { subscriptionError sub_unit_invalid; return 1; }
+    addOrUpdateYaml "$dir/state.yaml" domain "$domain" string && addOrUpdateYaml "$dir/state.yaml" token "$token" string \
+        && addOrUpdateYaml "$dir/state.yaml" enabled true bool || return 1
+    switched=true
+    subscriptionFirewall add || return 1
+    subscriptionCommitSnapshot "$dir/snapshot" || return 1
+    mv -f -- "$HIHY_SUB_ETC/.Caddyfile.pending" "$HIHY_SUB_ETC/Caddyfile" && cp -p -- "$dir/hihy-sub.service" "$HIHY_SUB_UNIT" || return 1
+    systemctl daemon-reload && systemctl restart hihy-sub.service || return 1
+    subscriptionProbe "$domain" "$token" || return 1
+    systemctl enable hihy-sub.service >/dev/null 2>&1 || return 1
+    mv -f -- "$dir/state.yaml" "$HIHY_SUB_ETC/state.yaml" || return 1
+    success=true
+    subscriptionPruneSnapshots || true
+)
+
+subscriptionEnable() {
+    local domain="${1:-}" token
+    domain="${domain,,}"
+    subscriptionCheckPlatform || return 1
+    if subscriptionEnabled && systemctl is-active --quiet hihy-sub.service; then
+        [ -z "$domain" ] || [ "$domain" = "$(subscriptionRead domain)" ] || { subscriptionError sub_disable_first; return 1; }
+        subscriptionProbe "$(subscriptionRead domain)" "$(subscriptionRead token)" || return 1
+        subscriptionShow
+        return
+    fi
+    [ -n "$domain" ] || domain=$(subscriptionRead domain '')
+    [ -n "$domain" ] || read -r -p "$(i18n sub_domain_prompt)" domain
+    domain="${domain,,}"
+    subscriptionCheckDomain "$domain" && subscriptionCheckPort || return 1
+    subscriptionPreparePaths && subscriptionInstallCaddy || return 1
+    token=$(subscriptionRead token '')
+    subscriptionValidToken "$token" || token=$(openssl rand -hex 32) || return 1
+    printf '%s\n' "$(i18n sub_enabling)"
+    subscriptionApplyEndpoint "$domain" "$token" || return 1
+    subscriptionShow
+}
+
+subscriptionShow() {
+    local domain token url format
+    subscriptionEnabled || { subscriptionError sub_not_enabled; return 1; }
+    domain=$(subscriptionRead domain); token=$(subscriptionRead token)
+    subscriptionValidDomain "$domain" && subscriptionValidToken "$token" || return 1
+    url="https://$domain/s/$token"
+    printf '%s\n%s\n' "$(i18n sub_link)" "$url"
+    printf '%s\n' "$(i18n sub_v2rayn_hint)" "$(i18n sub_formats_hint)"
+    for format in hysteria mihomo singbox; do printf '%s?format=%s\n' "$url" "$format"; done
+    printf 'sing-box://import-remote-profile?url=%s#HiHysteria\n' "$(urlEncode "$url")"
+    printf '%s\n' "$(i18n sub_secret_hint)"
+}
+
+subscriptionStatus() {
+    if ! subscriptionOwned; then printf '%s\n' "$(i18n sub_not_enabled)"; return 0; fi
+    printf '%s: %s\n' "$(i18n sub_domain_label)" "$(subscriptionRead domain '-')"
+    printf '%s: %s\n' "$(i18n sub_enabled_label)" "$(subscriptionRead enabled false)"
+    systemctl is-active hihy-sub.service || true
+}
+
+subscriptionDisable() {
+    subscriptionOwned || { subscriptionError sub_not_enabled; return 1; }
+    if [ -f "$HIHY_SUB_UNIT" ]; then
+        subscriptionUnitOwned || return 1
+        systemctl stop hihy-sub.service && systemctl disable hihy-sub.service >/dev/null 2>&1 || return 1
+    fi
+    subscriptionFirewall remove || return 1
+    addOrUpdateYaml "$HIHY_SUB_ETC/state.yaml" enabled false bool || return 1
+    printf '%s\n' "$(i18n sub_disabled)"
+}
+
+subscriptionRotateToken() {
+    subscriptionEnabled || { subscriptionError sub_not_enabled; return 1; }
+    subscriptionCheckPlatform && subscriptionInstallCaddy || return 1
+    subscriptionApplyEndpoint "$(subscriptionRead domain)" "$(openssl rand -hex 32)" || return 1
+    printf '%s\n' "$(i18n sub_rotation_hint)"
+    subscriptionShow
+}
+
+subscriptionUninstall() {
+    local dir account_owned=false
+    subscriptionOwned || return 0
+    subscriptionValidatePaths || return 1
+    for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB"; do subscriptionPathOwned "$dir" || return 1; done
+    [ ! -f "$HIHY_SUB_ETC/account-owned" ] || account_owned=true
+    subscriptionDisable || return 1
+    [ ! -f "$HIHY_SUB_UNIT" ] || { subscriptionUnitOwned && rm -f -- "$HIHY_SUB_UNIT"; } || return 1
+    systemctl daemon-reload || return 1
+    for dir in "$HIHY_SUB_ETC" "$HIHY_SUB_STATE" "$HIHY_SUB_LIB"; do rm -rf -- "$dir" || return 1; done
+    if [ "$account_owned" = true ] && id "$HIHY_SUB_USER" >/dev/null 2>&1; then userdel "$HIHY_SUB_USER" || return 1; fi
+}
+
+subscriptionMenu() {
+    local choice
+    printf '%s\n' "$(i18n sub_menu_choices)"
+    read -r -p "$(i18n menu_prompt_choice)" choice || return 1
+    case "$choice" in
+        1) subscriptionEnable ;;
+        2) subscriptionStatus ;;
+        3) subscriptionShow ;;
+        4) subscriptionRefresh ;;
+        5) subscriptionRotateToken ;;
+        6) subscriptionDisable ;;
+        0) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+subscriptionCommand() {
+    case "${1:-menu}" in
+        enable) subscriptionEnable "${2:-}" ;;
+        status) subscriptionStatus ;;
+        show) subscriptionShow ;;
+        refresh) subscriptionRefresh ;;
+        rotate-token) subscriptionRotateToken ;;
+        disable) subscriptionDisable ;;
+        menu) subscriptionMenu ;;
+        *) printf '%s\n' 'hihy subscription enable|status|show|refresh|rotate-token|disable'; return 2 ;;
+    esac
+}
 
 # ----- 80-stats.sh -----
 # 按终端显示宽度左对齐补齐(CJK 等宽字符按 2 列计),避免中文表头与数据错位
@@ -4591,6 +5167,7 @@ menu() {
             14) checkLogs ;;
             15) addSocks5Outbound ;;
             16) install auto ;;
+            17) subscriptionMenu ;;
             0) exit 0 ;;
             *) echoColor red "$(i18n error_input_error)" ;;
         esac
@@ -4602,7 +5179,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     loadPersistedLanguage
     checkRoot
     case "${1:-}" in
-        firewallRestore|cronTask) ;;
+        firewallRestore|subscription-firewall-restore|cronTask) ;;
         *)
             exec 9>/run/hihy.operation.lock
             flock -n 9 || { securityError "Another hihy operation is running."; exit 1; }
@@ -4674,6 +5251,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             addSocks5Outbound
             ;;
         firewallRestore) firewallRestore ;;
+        subscription-firewall-restore) subscriptionFirewallRestore ;;
+        subscription) shift; subscriptionCommand "$@" ;;
+        17) subscriptionMenu ;;
         cronTask) cronTask ;;
         *) menu ;;
     esac

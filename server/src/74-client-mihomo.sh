@@ -8,7 +8,7 @@
 #   5. 规则镜像改用 jsdelivr(HIHY_RULESET_MIRROR 可覆盖)
 #   6. 删除 GEOIP 规则:LAN 由 lancidr 覆盖;CN 由 cncidr 覆盖,且 GEOIP 会强制下载 MMDB,
 #      下载失败会让整份配置启动失败
-#   7. gecko 混淆:由调用方拦住,不走到此函数
+#   7. Gecko 和 ECH 按 mihomo 1.19.34 的字段输出；Mimic 不受支持
 generateMihomoYaml() (
     loadClientParams || return 1
     [ "$HIHY_CP_mimicStatus" != true ] || return 1

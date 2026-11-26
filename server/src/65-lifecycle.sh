@@ -32,6 +32,7 @@ checkRoot() {
 }
 
 uninstall() {
+    subscriptionUninstall || return 1
     local install_state
     install_state=$(classifyInstallState)
     if [ "$install_state" = "not-installed" ]; then

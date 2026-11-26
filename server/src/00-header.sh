@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.20-secure.1"
+hihyV="ver1.21-secure.1"
 umask 077
 
 # i18n 多语言支持
@@ -25,3 +25,9 @@ if [ -x "$HIHY_YQ_BIN" ]; then
     export PATH="$(dirname "$HIHY_YQ_BIN"):$PATH"
 fi
 HIHY_RULESET_MIRROR="${HIHY_RULESET_MIRROR:-https://cdn.jsdelivr.net/gh}"
+HIHY_SUB_ETC="${HIHY_SUB_ETC:-/etc/hihy-sub}"
+HIHY_SUB_STATE="${HIHY_SUB_STATE:-/var/lib/hihy-sub}"
+HIHY_SUB_LIB="${HIHY_SUB_LIB:-/usr/local/lib/hihy-sub}"
+HIHY_SUB_UNIT="${HIHY_SUB_UNIT:-/etc/systemd/system/hihy-sub.service}"
+HIHY_SUB_USER="hihy-sub"
+HIHY_CADDY_VERSION="2.11.9"

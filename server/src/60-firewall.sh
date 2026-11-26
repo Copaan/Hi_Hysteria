@@ -2,7 +2,7 @@
 formatFirewallPortSpec() { printf '%s\n' "${1//-/:}"; }
 hasFirewallToken() { tr -s '[:space:]' '\n' | grep -Fxq -- "$1"; }
 
-firewallLedger() { printf '%s/conf/firewall.tsv\n' "$HIHY_ROOT_DIR"; }
+firewallLedger() { printf '%s\n' "${HIHY_FIREWALL_LEDGER:-$HIHY_ROOT_DIR/conf/firewall.tsv}"; }
 snapshotFirewallLedger() {
     local dest="$1" source
     source=$(firewallLedger)
@@ -24,11 +24,11 @@ firewallRule() {
         iptables|ip6tables)
             bin="$backend"
             if [ "$action" = add ]; then
-                "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null \
-                    || "$bin" -I INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+                "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null \
+                    || "$bin" -I INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT
             else
-                if "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then
-                    "$bin" -D INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT
+                if "$bin" -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then
+                    "$bin" -D INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT
                 fi
             fi ;;
         ufw)
@@ -60,14 +60,14 @@ allowPort() {
     fi
     record="$backend|$proto|$port"
     if ! grep -Fxq -- "$record" "$ledger"; then
-        if [[ "$backend" = iptables ]] && iptables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+        if [[ "$backend" = iptables ]] && iptables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then return 0; fi
         printf '%s\n' "$record" >>"$ledger" || return 1
     fi
     firewallRule add "$backend" "$proto" "$port" || return 1
     if [ "$backend" = iptables ] && command -v ip6tables >/dev/null 2>&1 && ip6tables -L INPUT >/dev/null 2>&1; then
         record="ip6tables|$proto|$port"
         if ! grep -Fxq -- "$record" "$ledger"; then
-            if ip6tables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(hihysteria)" -j ACCEPT 2>/dev/null; then return 0; fi
+            if ip6tables -C INPUT -p "$proto" --dport "$port" -m comment --comment "allow $proto/$port(${HIHY_FIREWALL_OWNER:-hihysteria})" -j ACCEPT 2>/dev/null; then return 0; fi
             printf '%s\n' "$record" >>"$ledger" || return 1
         fi
         firewallRule add ip6tables "$proto" "$port" || return 1

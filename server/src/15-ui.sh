@@ -145,6 +145,7 @@ show_menu() {
     menuItem 10 "$(i18n menu_item_switch_ip)"
     menuItem 12 "$(i18n menu_item_acl)"
     menuItem 15 "$(i18n menu_item_socks5)"
+    menuItem 17 "$(i18n menu_item_subscription)"
 
     menuSection "$(i18n menu_section_maintain)"
     menuItem 7 "$(i18n menu_item_update_core)"

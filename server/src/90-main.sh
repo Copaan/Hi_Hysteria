@@ -20,6 +20,7 @@ menu() {
             14) checkLogs ;;
             15) addSocks5Outbound ;;
             16) install auto ;;
+            17) subscriptionMenu ;;
             0) exit 0 ;;
             *) echoColor red "$(i18n error_input_error)" ;;
         esac
@@ -31,7 +32,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     loadPersistedLanguage
     checkRoot
     case "${1:-}" in
-        firewallRestore|cronTask) ;;
+        firewallRestore|subscription-firewall-restore|cronTask) ;;
         *)
             exec 9>/run/hihy.operation.lock
             flock -n 9 || { securityError "Another hihy operation is running."; exit 1; }
@@ -103,6 +104,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
             addSocks5Outbound
             ;;
         firewallRestore) firewallRestore ;;
+        subscription-firewall-restore) subscriptionFirewallRestore ;;
+        subscription) shift; subscriptionCommand "$@" ;;
+        17) subscriptionMenu ;;
         cronTask) cronTask ;;
         *) menu ;;
     esac

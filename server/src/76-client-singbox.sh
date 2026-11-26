@@ -1,6 +1,8 @@
 #!/bin/bash
 # Generate a sing-box 1.14+ configuration with structured value encoding.
 generateSingboxJson() (
+    local profile="${1:-desktop}"
+    case "$profile" in desktop|app) ;; *) return 1 ;; esac
     loadClientParams || return 1
     [ "$HIHY_CP_mimicStatus" != true ] || { securityError 'sing-box does not support Mimic.'; return 1; }
     local destination outFile json_file root="$HIHY_ROOT_DIR" mirror="$HIHY_RULESET_MIRROR" ca_file n up_num down_num
@@ -82,6 +84,9 @@ JSON
     if [ "$HIHY_CP_obfsStatus" = true ]; then
         addOrUpdateYaml "$outFile" outbounds[0].obfs.type "$HIHY_CP_obfsType" string || return 1
         addOrUpdateYaml "$outFile" outbounds[0].obfs.password "$HIHY_CP_obfsPass" string || return 1
+    fi
+    if [ "$profile" = app ]; then
+        yq -i '.inbounds = [{"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"], "mtu": 1500, "auto_route": true}] | .route.auto_detect_interface = true | .route.rules = [{"port": 53, "action": "hijack-dns"}] + .route.rules | del(.experimental.clash_api)' "$outFile" || return 1
     fi
     yq -o=json '.' "$outFile" >"$json_file" || return 1
     [ ! -L "$destination" ] || return 1

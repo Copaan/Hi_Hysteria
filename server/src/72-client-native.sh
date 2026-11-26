@@ -169,6 +169,10 @@ generate_client_config() (
     chmod 600 "$client_configfile" && mv -f -- "$client_configfile" "$destination" || return 1
     client_configfile="$destination"
     trap - EXIT
+    if [ "${HIHY_CLIENT_QUIET:-false}" = true ]; then
+        generateMihomoYaml && generateSingboxJson
+        return $?
+    fi
     # 在生成配置前添加分隔线
     echo -e "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "$(i18n client_config_generating)"
@@ -240,7 +244,7 @@ generate_client_config() (
     echoColor green "↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓$(i18n client_config_copy_marker)↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓"
     cat "${client_configfile}"
     echoColor green "↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑$(i18n client_config_copy_marker)↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑"
-    # mihomo/sing-box 都不支持 mimic;gecko 时 mihomo 本就跳过
+    # Mimic 仅由原生客户端导出，其余已选择参数按各客户端能力输出。
     if [ "${HIHY_CP_mimicStatus}" == "true" ]; then
         echoColor yellow "$(i18n client_mihomo_mimic_skip)"
         echoColor yellow "$(i18n client_singbox_mimic_skip)"
@@ -248,6 +252,7 @@ generate_client_config() (
         generateMihomoYaml || return 1
         generateSingboxJson || return 1
     fi
+    if subscriptionEnabled; then subscriptionRefresh || return 1; fi
     echo -e "\n$(i18n client_config_done)"
     echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 )

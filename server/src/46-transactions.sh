@@ -64,7 +64,13 @@ validateHysteriaInputs() {
 # Apply a complete candidate with configuration, certificate and service rollback.
 writeHysteriaConfig() (
     local transaction candidate backup dir field value was_running=false stopped=false activated=false success=false timeout=15
+    local subscription_previous="" subscription_ready=false subscription_switched=false
     validateHysteriaInputs || return 1
+    if subscriptionEnabled; then
+        [ "$mimic_status" != true ] || { subscriptionError sub_incompatible; return 1; }
+        if [ "$masquerade_tcp" = true ] && [ "$port" = 443 ]; then subscriptionError sub_port_conflict; return 1; fi
+        subscription_previous=$(readlink "$HIHY_SUB_STATE/content/current") || return 1
+    fi
     mkdir -p "$HIHY_ROOT_DIR" || return 1
     [ ! -L "$HIHY_ROOT_DIR" ] || return 1
     transaction=$(mktemp -d "$HIHY_ROOT_DIR/.config.XXXXXXXX") || return 1
@@ -74,6 +80,10 @@ writeHysteriaConfig() (
         local rc=$? part
         stopValidationProcess
         if [ "$success" != true ]; then
+            if [ "$subscription_switched" = true ]; then
+                subscriptionRestoreSnapshot "$subscription_previous" || rc=1
+                subscriptionPruneSnapshots || rc=1
+            fi
             restoreFirewallLedger "$transaction/firewall.before" || rc=1
             if [ "$activated" = true ]; then
                 [ "$was_running" != true ] || stop >/dev/null 2>&1 || true
@@ -97,6 +107,10 @@ writeHysteriaConfig() (
     done
     HIHY_CONFIG_ROOT="$candidate"
     generateStagedConfig || return 1
+    if subscriptionEnabled; then
+        subscriptionRenderSnapshot "$candidate" "$transaction/subscription" || return 1
+        subscription_ready=true
+    fi
     if [ -f "$backup/acl/acl.txt" ]; then
         grep -Fxv 'reject(all, udp/443)' "$backup/acl/acl.txt" >"$candidate/acl/acl.txt" || [ $? -eq 1 ] || return 1
         if [ "$block_http3" = true ]; then printf '%s\n' 'reject(all, udp/443)' >>"$candidate/acl/acl.txt"; fi
@@ -132,6 +146,10 @@ writeHysteriaConfig() (
     if [ "$useAcme" = true ] && [ "$useDns" != true ]; then allowPort tcp 80 || return 1; fi
     secureInstallPermissions || return 1
     if [ "$was_running" = true ]; then start && [ "$(getServiceRunState)" = running ] || return 1; fi
+    if [ "$subscription_ready" = true ]; then
+        subscription_switched=true
+        subscriptionCommitSnapshot "$transaction/subscription" || return 1
+    fi
     if [ "${max_CRW:-0}" -gt 0 ]; then
         if sysctl -w "net.core.rmem_max=$max_CRW" "net.core.wmem_max=$max_CRW" >/dev/null 2>&1; then
             if [ ! -e /etc/sysctl.d/99-hihy.conf ] || [ -f "$HIHY_ROOT_DIR/conf/sysctl-owned" ]; then
@@ -141,4 +159,5 @@ writeHysteriaConfig() (
         fi
     fi
     success=true
+    [ "$subscription_ready" != true ] || subscriptionPruneSnapshots || true
 )

@@ -1,13 +1,14 @@
 # 一键安装(零交互)
 
-`ver1.13` 新增。适合脚本化部署、批量开机、或者只想"能用就行"的场景：不问任何问题，直接装好一个安全可用的 Hysteria2 服务端。
+适合脚本化部署、批量开机、或者只想"能用就行"的场景：不问任何问题，直接装好一个安全可用的 Hysteria2 服务端。
 
 ## 用法
 
 全新机器（连 hihy 都没装）：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/kaecho/Hi_Hysteria/refs/heads/main/server/install.sh) --auto
+curl -fL --retry 2 --connect-timeout 10 --max-time 180 -o install.sh https://raw.githubusercontent.com/Copaan/Hi_Hysteria/main/server/install.sh &&
+sudo bash install.sh --auto
 ```
 
 已安装 hihy：
@@ -57,7 +58,6 @@ hihy autoinstall
 | `HIHY_AUTO_ECH_PUBLIC_NAME` | ECH 公开域名(明文幌子 SNI)，默认 `www.microsoft.com` |
 | `HIHY_AUTO_MIMIC` | `true` 启用 Mimic(伪装 TCP，需内核 v2.12.0+)。与端口跳跃互斥；服务端由脚本自动下载安装 mimic，客户端需 Linux+root 并手动安装 |
 
-bootstrap 阶段(`install.sh --auto`)还支持 `--lang=zh|en|fa|ru` 指定语言，缺省英文。
 
 ## 与交互式安装的关系
 

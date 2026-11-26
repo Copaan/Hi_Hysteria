@@ -5,7 +5,12 @@ menu() {
         read -r -p "$(msg menu_prompt_choice)" input || return 0
         case $input in
             1) install ;;
-            2) uninstall ;;
+            2)
+                if uninstall; then
+                    printf '%s\n' "$(msg reinstall_from_installer)"
+                    return 0
+                fi
+                ;;
             3) start ;;
             4) stop ;;
             5) restart ;;

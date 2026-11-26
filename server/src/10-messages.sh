@@ -225,7 +225,8 @@ messageTemplate() {
         gandi_token_prompt) printf '%s' '请输入Gandi gandi_api_token:' ;;
         generating_config) printf '%s' 'Generating config...' ;;
         godaddy_token_prompt) printf '%s' '请输入Godaddy godaddy_api_token:' ;;
-        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败,请检查网络或写入权限后重试.' ;;
+        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败，请退出后重新运行 install.sh，并检查本地文件和写入权限。' ;;
+        reinstall_from_installer) printf '%s' '如需重新安装，请重新运行 bash install.sh。' ;;
         hihy_update_complete) printf '%s' 'hihy更新完成。' ;;
         hysteria_core_not_found) printf '%s' 'Hysteria 核心未找到。' ;;
         hysteria_core_update_done) printf '%s' 'Hysteria 核心更新完成。' ;;

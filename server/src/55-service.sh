@@ -296,17 +296,15 @@ install() {
         return 1
     fi
 
-    # 创建必要目录
+    # 确认本地主程序可用后，才创建安装目录和失败标记。
+    if ! installHihyLauncher; then
+        echoColor red "$(msg hihy_cmd_install_fail)"
+        return 1
+    fi
+
     mkdir -p /etc/hihy/{bin,conf,cert,result,logs}
     markInstallFailed "install-start" "installation started but not completed"
     echoColor purple "$(msg install_ready)"
-
-    # 尽早安装 hihy 启动器，确保即使后续步骤失败，用户仍可用 hihy 命令重试
-    if ! installHihyLauncher; then
-        markInstallFailed "launcher" "failed to install hihy launcher at start"
-        echoColor red "$(msg hihy_cmd_install_fail)"
-        exit 1
-    fi
 
     checkSystemForUpdate || return 1
     if ! downloadHysteriaCore; then

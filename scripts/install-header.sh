@@ -29,11 +29,31 @@ installerValidatePaths() {
     done
 }
 
+# 仅识别主程序部署失败、尚未产生任何配置或服务的安装残留。
+installerCanRetryLauncherFailure() {
+    local root_dir="$1" marker="$1/result/install.failed" item leftovers
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+    cmp -s "$marker" <(printf 'phase=launcher\ndetails=failed to install hihy launcher at start\n') || return 1
+    for item in "$root_dir/bin/appS" "$root_dir/conf/config.yaml" "$root_dir/conf/backup.yaml" \
+        "$(getHihyServiceScriptPrimary)" "$(getHihyServiceScriptFallback)"; do
+        [ ! -e "$item" ] && [ ! -L "$item" ] || return 1
+    done
+    if [ -e "$root_dir/bin/yq" ] || [ -L "$root_dir/bin/yq" ]; then
+        [ -f "$root_dir/bin/yq" ] && [ ! -L "$root_dir/bin/yq" ] || return 1
+    fi
+    leftovers=$(find "$root_dir" ! -type d ! -path "$marker" ! -path "$root_dir/bin/yq" -print -quit) || return 1
+    [ -z "$leftovers" ]
+}
+
 installerRequireFresh() {
-    [ "$(classifyInstallState "$1" "$2")" = not-installed ] || {
+    [ "$(classifyInstallState "$1" "$2")" = not-installed ] && return 0
+    installerCanRetryLauncherFailure "$1" && return 0
+    if [ -x "$2" ]; then
         printf '%s\n' '检测到已有或未完成的安装，已停止覆盖。请运行 hihy 管理现有安装。' >&2
-        return 1
-    }
+    else
+        printf '%s\n' '检测到已有或未完成的安装，且 hihy 主程序缺失。现有文件已保留，不能直接覆盖安装。' >&2
+    fi
+    return 1
 }
 
 installerAcquireLock() {
@@ -78,6 +98,10 @@ installerMain() (
     installPrivateYq || return 1
     installHihyLauncher "$workdir/hy2.sh" "$bin_link" || return 1
     chmod 700 "$bin_link" || return 1
+    if installerCanRetryLauncherFailure "$root_dir"; then
+        rm -- "$root_dir/result/install.failed" || return 1
+        printf '%s\n' '已恢复 hihy 主程序，请重新选择安装。'
+    fi
     export HIHY_ROOT_DIR="$root_dir" HIHY_BIN_LINK="$bin_link"
     installerReleaseLock || return 1
     if [ "$auto" = true ]; then "$bin_link" autoinstall; else "$bin_link"; fi

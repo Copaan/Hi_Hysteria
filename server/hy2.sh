@@ -1,5 +1,5 @@
 #!/bin/bash
-hihyV="ver1.23-secure.2"
+hihyV="ver1.23-secure.3"
 # GENERATED FILE — edit server/src/ and run bash scripts/build.sh.
 umask 077
 
@@ -377,7 +377,8 @@ messageTemplate() {
         gandi_token_prompt) printf '%s' '请输入Gandi gandi_api_token:' ;;
         generating_config) printf '%s' 'Generating config...' ;;
         godaddy_token_prompt) printf '%s' '请输入Godaddy godaddy_api_token:' ;;
-        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败,请检查网络或写入权限后重试.' ;;
+        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败，请退出后重新运行 install.sh，并检查本地文件和写入权限。' ;;
+        reinstall_from_installer) printf '%s' '如需重新安装，请重新运行 bash install.sh。' ;;
         hihy_update_complete) printf '%s' 'hihy更新完成。' ;;
         hysteria_core_not_found) printf '%s' 'Hysteria 核心未找到。' ;;
         hysteria_core_update_done) printf '%s' 'Hysteria 核心更新完成。' ;;
@@ -3686,17 +3687,15 @@ install() {
         return 1
     fi
 
-    # 创建必要目录
+    # 确认本地主程序可用后，才创建安装目录和失败标记。
+    if ! installHihyLauncher; then
+        echoColor red "$(msg hihy_cmd_install_fail)"
+        return 1
+    fi
+
     mkdir -p /etc/hihy/{bin,conf,cert,result,logs}
     markInstallFailed "install-start" "installation started but not completed"
     echoColor purple "$(msg install_ready)"
-
-    # 尽早安装 hihy 启动器，确保即使后续步骤失败，用户仍可用 hihy 命令重试
-    if ! installHihyLauncher; then
-        markInstallFailed "launcher" "failed to install hihy launcher at start"
-        echoColor red "$(msg hihy_cmd_install_fail)"
-        exit 1
-    fi
 
     checkSystemForUpdate || return 1
     if ! downloadHysteriaCore; then
@@ -5713,7 +5712,12 @@ menu() {
         read -r -p "$(msg menu_prompt_choice)" input || return 0
         case $input in
             1) install ;;
-            2) uninstall ;;
+            2)
+                if uninstall; then
+                    printf '%s\n' "$(msg reinstall_from_installer)"
+                    return 0
+                fi
+                ;;
             3) start ;;
             4) stop ;;
             5) restart ;;

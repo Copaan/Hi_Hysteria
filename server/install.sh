@@ -29,11 +29,31 @@ installerValidatePaths() {
     done
 }
 
+# 仅识别主程序部署失败、尚未产生任何配置或服务的安装残留。
+installerCanRetryLauncherFailure() {
+    local root_dir="$1" marker="$1/result/install.failed" item leftovers
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+    cmp -s "$marker" <(printf 'phase=launcher\ndetails=failed to install hihy launcher at start\n') || return 1
+    for item in "$root_dir/bin/appS" "$root_dir/conf/config.yaml" "$root_dir/conf/backup.yaml" \
+        "$(getHihyServiceScriptPrimary)" "$(getHihyServiceScriptFallback)"; do
+        [ ! -e "$item" ] && [ ! -L "$item" ] || return 1
+    done
+    if [ -e "$root_dir/bin/yq" ] || [ -L "$root_dir/bin/yq" ]; then
+        [ -f "$root_dir/bin/yq" ] && [ ! -L "$root_dir/bin/yq" ] || return 1
+    fi
+    leftovers=$(find "$root_dir" ! -type d ! -path "$marker" ! -path "$root_dir/bin/yq" -print -quit) || return 1
+    [ -z "$leftovers" ]
+}
+
 installerRequireFresh() {
-    [ "$(classifyInstallState "$1" "$2")" = not-installed ] || {
+    [ "$(classifyInstallState "$1" "$2")" = not-installed ] && return 0
+    installerCanRetryLauncherFailure "$1" && return 0
+    if [ -x "$2" ]; then
         printf '%s\n' '检测到已有或未完成的安装，已停止覆盖。请运行 hihy 管理现有安装。' >&2
-        return 1
-    }
+    else
+        printf '%s\n' '检测到已有或未完成的安装，且 hihy 主程序缺失。现有文件已保留，不能直接覆盖安装。' >&2
+    fi
+    return 1
 }
 
 installerAcquireLock() {
@@ -78,16 +98,20 @@ installerMain() (
     installPrivateYq || return 1
     installHihyLauncher "$workdir/hy2.sh" "$bin_link" || return 1
     chmod 700 "$bin_link" || return 1
+    if installerCanRetryLauncherFailure "$root_dir"; then
+        rm -- "$root_dir/result/install.failed" || return 1
+        printf '%s\n' '已恢复 hihy 主程序，请重新选择安装。'
+    fi
     export HIHY_ROOT_DIR="$root_dir" HIHY_BIN_LINK="$bin_link"
     installerReleaseLock || return 1
     if [ "$auto" = true ]; then "$bin_link" autoinstall; else "$bin_link"; fi
 )
 
-HIHY_EMBEDDED_SHA256='063dba5c9d87e61025e88d3ee842e847cf69f79eea7f32de517cf4c73eede287'
+HIHY_EMBEDDED_SHA256='aff689ba4554badad7273e349d18ae434da00ff3e7da122fe18f7eaad41ef7a7'
 extractEmbeddedRuntime() {
-    cat <<'__HIHY_RUNTIME_063dba5c9d87e61025e88d3ee842e847cf69f79eea7f32de517cf4c73eede287'
+    cat <<'__HIHY_RUNTIME_aff689ba4554badad7273e349d18ae434da00ff3e7da122fe18f7eaad41ef7a7'
 #!/bin/bash
-hihyV="ver1.23-secure.2"
+hihyV="ver1.23-secure.3"
 # GENERATED FILE — edit server/src/ and run bash scripts/build.sh.
 umask 077
 
@@ -465,7 +489,8 @@ messageTemplate() {
         gandi_token_prompt) printf '%s' '请输入Gandi gandi_api_token:' ;;
         generating_config) printf '%s' 'Generating config...' ;;
         godaddy_token_prompt) printf '%s' '请输入Godaddy godaddy_api_token:' ;;
-        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败,请检查网络或写入权限后重试.' ;;
+        hihy_cmd_install_fail) printf '%s' 'hihy 命令安装失败，请退出后重新运行 install.sh，并检查本地文件和写入权限。' ;;
+        reinstall_from_installer) printf '%s' '如需重新安装，请重新运行 bash install.sh。' ;;
         hihy_update_complete) printf '%s' 'hihy更新完成。' ;;
         hysteria_core_not_found) printf '%s' 'Hysteria 核心未找到。' ;;
         hysteria_core_update_done) printf '%s' 'Hysteria 核心更新完成。' ;;
@@ -3774,17 +3799,15 @@ install() {
         return 1
     fi
 
-    # 创建必要目录
+    # 确认本地主程序可用后，才创建安装目录和失败标记。
+    if ! installHihyLauncher; then
+        echoColor red "$(msg hihy_cmd_install_fail)"
+        return 1
+    fi
+
     mkdir -p /etc/hihy/{bin,conf,cert,result,logs}
     markInstallFailed "install-start" "installation started but not completed"
     echoColor purple "$(msg install_ready)"
-
-    # 尽早安装 hihy 启动器，确保即使后续步骤失败，用户仍可用 hihy 命令重试
-    if ! installHihyLauncher; then
-        markInstallFailed "launcher" "failed to install hihy launcher at start"
-        echoColor red "$(msg hihy_cmd_install_fail)"
-        exit 1
-    fi
 
     checkSystemForUpdate || return 1
     if ! downloadHysteriaCore; then
@@ -5801,7 +5824,12 @@ menu() {
         read -r -p "$(msg menu_prompt_choice)" input || return 0
         case $input in
             1) install ;;
-            2) uninstall ;;
+            2)
+                if uninstall; then
+                    printf '%s\n' "$(msg reinstall_from_installer)"
+                    return 0
+                fi
+                ;;
             3) start ;;
             4) stop ;;
             5) restart ;;
@@ -5906,7 +5934,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         *) menu ;;
     esac
 fi
-__HIHY_RUNTIME_063dba5c9d87e61025e88d3ee842e847cf69f79eea7f32de517cf4c73eede287
+__HIHY_RUNTIME_aff689ba4554badad7273e349d18ae434da00ff3e7da122fe18f7eaad41ef7a7
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then installerMain "$@"; fi

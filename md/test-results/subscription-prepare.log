@@ -1,0 +1,6 @@
+time="2026-11-26T03:52:03.904289618Z" level=info msg="Start initial configuration in progress"
+time="2026-11-26T03:52:04.141882757Z" level=info msg="Geodata Loader mode: memconservative"
+time="2026-11-26T03:52:04.142798413Z" level=info msg="Geosite Matcher implementation: succinct"
+time="2026-11-26T03:52:04.155190414Z" level=info msg="Initial configuration complete, total time: 248ms"
+configuration file /var/lib/hihy-sub/content/current/mihomo.yaml test is successful
+PASS: pinned Caddy, full snapshots, native Caddy validation, unit and mobile core parsing

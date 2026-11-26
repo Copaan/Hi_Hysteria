@@ -1,0 +1,40 @@
+PASS baseline/native: connected
+PASS baseline/mihomo: connected
+PASS baseline/sing-box: connected
+PASS baseline/sing-box: unmodified HTTPS app profile connected through real TUN
+PASS native: wrong auth and certificate rejected
+PASS mihomo: wrong auth and certificate rejected
+PASS sing-box: wrong auth and certificate rejected
+PASS gecko-ech/native: connected
+PASS gecko-ech/mihomo: connected
+PASS gecko-ech/sing-box: connected
+PASS gecko-ech/sing-box: unmodified HTTPS app profile connected through real TUN
+PASS hopping/native: connected
+PASS hopping/mihomo: connected
+PASS hopping/sing-box: connected
+PASS hopping/sing-box: unmodified HTTPS app profile connected through real TUN
+PASS failed reconfiguration restored running service
+PASS sniff.enable enforces HTTP Host ACL for an IP destination
+PASS verified default site serves over certificate-verified HTTPS
+{
+  "passed": [
+    "baseline/native: connected",
+    "baseline/mihomo: connected",
+    "baseline/sing-box: connected",
+    "baseline/sing-box: unmodified HTTPS app profile connected through real TUN",
+    "native: wrong auth and certificate rejected",
+    "mihomo: wrong auth and certificate rejected",
+    "sing-box: wrong auth and certificate rejected",
+    "gecko-ech/native: connected",
+    "gecko-ech/mihomo: connected",
+    "gecko-ech/sing-box: connected",
+    "gecko-ech/sing-box: unmodified HTTPS app profile connected through real TUN",
+    "hopping/native: connected",
+    "hopping/mihomo: connected",
+    "hopping/sing-box: connected",
+    "hopping/sing-box: unmodified HTTPS app profile connected through real TUN",
+    "failed reconfiguration restored running service",
+    "sniff.enable enforces HTTP Host ACL for an IP destination",
+    "verified default site serves over certificate-verified HTTPS"
+  ]
+}

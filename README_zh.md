@@ -1,6 +1,8 @@
 # Hi Hysteria
 
-> **安全整改版 ver1.20-secure.1（2026-11-26）**：仅使用审核后的完整本地安装包。安装步骤、主动内核升级及已知边界见 [安全安装说明](md/security-install.md)，实际验收范围见 [测试记录](md/security-test-report.md)。当前默认核心为 2.14.0；后文历史演示中的远程更新、实时调度和旧导出路径不适用于此版本。
+> **安全整改版 ver1.21-secure.1（2026-11-26）**：仅使用审核后的完整本地安装包。安装步骤、主动内核升级及已知边界见 [安全安装说明](md/security-install.md)，实际验收范围见 [测试记录](md/security-test-report.md)。当前默认核心为 2.14.0；后文历史演示中的远程更新、实时调度和旧导出路径不适用于此版本。
+
+新增可选的[单一 HTTPS 订阅](md/subscriptions.md)：自动返回三类完整配置。部署条件、v2rayN 必要设置和验证边界见[订阅测试记录](md/subscription-test-report.md)。
 
 [English](README_en.md) | **中文** | [فارسی](README_fa.md) | [Русский](README_ru.md)
 
@@ -125,7 +127,7 @@ mihomo/sing-box 不支持 mimic，仅输出原生配置
 
 ```
 su - root #switch to root user.
-# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+# From the extracted, verified hihy-ver1.21-secure.1 package directory:
 bash install.sh --lang zh
 ```
 

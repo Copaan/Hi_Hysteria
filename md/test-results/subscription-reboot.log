@@ -1,0 +1,5 @@
+PASS: HTTPS rejects an untrusted CA and a mismatched SNI
+PASS: one HTTPS URL selects complete configurations for v2rayN, Clash Verge, mihomo, SFA, SFI and SFM
+PASS: explicit formats, unknown clients, wrong token, traversal, hidden files and method restrictions
+PASS: cache isolation, complete mobile TUN/DNS profile, and private server data excluded
+PASS: real reboot restores both services, independent firewall rules, non-root capabilities and unchanged HTTPS payloads

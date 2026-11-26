@@ -1,0 +1,13 @@
+All translation files and ordered placeholders are consistent.
+PASS: complete subscription payloads, app TUN/DNS, desktop preservation, private files and hostile input
+PASS: three exporters, typed names, Gecko/ECH, profiles, hopping, Realm, permissions and fail-closed trust
+hihy: Only HTTPS downloads are allowed.
+hihy: SHA256 verification failed.
+hihy: Invalid stable Hysteria version.
+hihy: Missing or duplicate checksum for unknown.
+hihy: WARP automatic installation requires a reviewed commit URL and SHA256. Install WARP separately or supply both.
+hihy: Candidate core failed configuration validation.
+PASS: security, serialization, offline menu, upgrade rollback and firewall ownership
+hihy: Downloaded core has the wrong ELF architecture.
+PASS: interrupted downloads and wrong ELF architecture fail before execution
+PASS: a failed stop operation also restores the previous running state

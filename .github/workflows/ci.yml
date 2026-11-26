@@ -64,3 +64,21 @@ jobs:
             hihy uninstall
             test ! -e /etc/hihy
           '
+  subscription-systemd:
+    needs: lint-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Full HTTPS subscription lifecycle on a disposable systemd runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bash curl wget ca-certificates openssl lsof iptables iproute2 bc dnsutils qrencode cron procps util-linux python3
+          sudo touch /etc/hihy-test-environment
+          sudo bash server/test_lifecycle.sh
+          sudo bash scripts/fetch-test-cores.sh /opt/hihy-test-cores
+          sudo env HIHY_SUB_TEST_KEEP=1 bash server/test_subscription_lifecycle.sh
+          sudo env HIHY_TEST_CORES=/opt/hihy-test-cores HIHY_TEST_SUBSCRIPTION=1 CURL_CA_BUNDLE=/var/lib/hihy-sub/caddy/test-ca.crt python3 server/test_transport.py
+      - name: Remove test installation
+        if: always()
+        run: |
+          if test -f /etc/hihy-test-environment && test -x /usr/bin/hihy; then sudo /usr/bin/hihy uninstall; fi

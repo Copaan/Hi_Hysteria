@@ -1,6 +1,8 @@
 # Hi_Hysteria 安全整改版安装说明
 
-版本：ver1.20-secure.1。基于 ver1.20 / 649ae47。维护日期：2026-11-26。
+版本：ver1.21-secure.1。基于 ver1.20 / 649ae47。维护日期：2026-11-26。
+
+新增可选单地址订阅；启用条件、导入方式及权限说明见同包 SUBSCRIPTIONS.md（仓库 md/subscriptions.md）。本版本订阅验收见 SUBSCRIPTION_TEST_REPORT.md；TEST_REPORT.md 保留为此前 ver1.20-secure.1 的历史验收记录。
 
 ## 安装前
 
@@ -15,9 +17,9 @@
 在可信机器核对外部摘要后，将包复制到服务器，再执行：
 
 ~~~bash
-sha256sum -c hihy-ver1.20-secure.1.tar.gz.sha256
-tar -xzf hihy-ver1.20-secure.1.tar.gz
-cd hihy-ver1.20-secure.1
+sha256sum -c hihy-ver1.21-secure.1.tar.gz.sha256
+tar -xzf hihy-ver1.21-secure.1.tar.gz
+cd hihy-ver1.21-secure.1
 sha256sum --strict -c SHA256SUMS
 sudo bash install.sh --lang zh
 ~~~

@@ -1,0 +1,13 @@
+
+Mihomo Meta v1.19.34 linux amd64 with go1.26.11 Wed Nov 11 06:48:42 UTC 2026
+sing-box version 1.14.4
+v2.11.9
+PASS: full uninstall removes subscription and core while preserving system Caddy and unrelated rules
+install.sh: OK
+hy2.sh: OK
+i18n/en.json: OK
+i18n/fa.json: OK
+i18n/ru.json: OK
+i18n/zh.json: OK
+PASS: full local package installs a working private core, leaves subscriptions opt-in and refuses existing-install overwrite
+PASS: final disposable installation removed

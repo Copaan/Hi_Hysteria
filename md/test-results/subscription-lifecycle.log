@@ -1,0 +1,17 @@
+PASS: tampered digest and non-ELF Caddy are rejected before execution
+PASS: failed HTTPS activation restores the stopped endpoint and running core
+PASS: one HTTPS URL selects complete configurations for v2rayN, Clash Verge, mihomo, SFA, SFI and SFM
+PASS: explicit formats, unknown clients, wrong token, traversal, hidden files and method restrictions
+PASS: cache isolation, complete mobile TUN/DNS profile, and private server data excluded
+PASS: dedicated account, private files, no admin API, and TCP-only HTTPS
+PASS: failed token rotation/restart restores the prior URL, payload and active service
+PASS: one HTTPS URL selects complete configurations for v2rayN, Clash Verge, mihomo, SFA, SFI and SFM
+PASS: explicit formats, unknown clients, wrong token, traversal, hidden files and method restrictions
+PASS: cache isolation, complete mobile TUN/DNS profile, and private server data excluded
+PASS: old token is revoked while the same three formats remain available
+PASS: one HTTPS URL selects complete configurations for v2rayN, Clash Verge, mihomo, SFA, SFI and SFM
+PASS: explicit formats, unknown clients, wrong token, traversal, hidden files and method restrictions
+PASS: cache isolation, complete mobile TUN/DNS profile, and private server data excluded
+PASS: reconfiguration publishes atomically, publication failure rolls back core and feed, and Mimic fails before installation
+PASS: status, show and refresh complete with no network interfaces
+PASS: retained subscription fixture for reboot and transport checks

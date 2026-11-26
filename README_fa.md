@@ -1,6 +1,8 @@
 # Hi Hysteria
 
-> **Security revision ver1.20-secure.1 (2026-11-26)**: install only from a complete reviewed local bundle. See [installation and trust boundaries](md/security-install.md) and [actual test coverage](md/security-test-report.md). Core baseline: 2.14.0. Historical demos below do not describe the current update behavior, scheduling or private export paths.
+> **Security revision ver1.21-secure.1 (2026-11-26)**: install only from a complete reviewed local bundle. See [installation and trust boundaries](md/security-install.md) and [actual test coverage](md/security-test-report.md). Core baseline: 2.14.0. Historical demos below do not describe the current update behavior, scheduling or private export paths.
+
+Optional [single HTTPS subscription](md/subscriptions.md) serves three complete client profiles. See [subscription test coverage](md/subscription-test-report.md) for actual validation and remaining gaps.
 
 [English](README_en.md) | [中文](README.md) | **فارسی** | [Русский](README_ru.md)
 
@@ -125,7 +127,7 @@ mihomo/sing-box از mimic پشتیبانی نمی‌کنند — فقط پیک�
 
 ```
 su - root # تغییر به کاربر root.
-# From the extracted, verified hihy-ver1.20-secure.1 package directory:
+# From the extracted, verified hihy-ver1.21-secure.1 package directory:
 bash install.sh --lang fa
 ```
 

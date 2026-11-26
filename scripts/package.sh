@@ -17,6 +17,8 @@ cp server/i18n/{en,zh,fa,ru}.json "$stage/$name/i18n/"
 cp LICENSE "$stage/$name/"
 cp md/security-install.md "$stage/$name/SECURITY_INSTALL.md"
 cp md/security-test-report.md "$stage/$name/TEST_REPORT.md"
+cp md/subscriptions.md "$stage/$name/SUBSCRIPTIONS.md"
+cp md/subscription-test-report.md "$stage/$name/SUBSCRIPTION_TEST_REPORT.md"
 (cd "$stage/$name" && sha256sum --strict --check SHA256SUMS)
 epoch=1795622400
 tar --sort=name --format=ustar --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --mode='u+rwX,go-rwx' -cf - -C "$stage" "$name" | gzip -n >"dist/$name.tar.gz"
